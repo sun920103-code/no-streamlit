@@ -1,45 +1,45 @@
 # FastAPI Backend Dependencies
 # ================================================
 
-# ── Web Framework ──
+# -- Web Framework --
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.9
 pydantic==2.9.0
 pydantic-settings==2.5.0
 
-# ── CORS & Security ──
+# -- CORS & Security --
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 
-# ── Task Queue ──
+# -- Task Queue --
 celery[redis]==5.4.0
 redis==5.1.0
 
-# ── Core Data & Compute ──
+# -- Core Data & Compute --
 numpy==2.2.6
 pandas==2.3.3
 scipy==1.15.3
 scikit-learn==1.7.2
 
-# ── Optimization ──
+# -- Optimization --
 cvxpy==1.7.5
 pyportfolioopt==1.5.6
 
-# ── Statistics & Risk Models ──
+# -- Statistics & Risk Models --
 statsmodels==0.14.6
 arch==8.0.0
 hmmlearn==0.3.3
 
-# ── LLM / AI ──
+# -- LLM / AI --
 openai==2.21.0
 
-# ── Config ──
+# -- Config --
 pyyaml==6.0.2
 
-# ── Report Generation ──
+# -- Report Generation --
 python-docx==1.1.2
 openpyxl==3.1.5
 
-# ── Logging ──
+# -- Logging --
 loguru==0.7.2

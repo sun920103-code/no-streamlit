@@ -3,23 +3,30 @@ import { createRouter, createWebHistory } from 'vue-router'
 const routes = [
   {
     path: '/',
-    name: 'Dashboard',
-    component: () => import('../views/Dashboard.vue'),
+    name: 'Landing',
+    component: () => import('../views/Landing.vue'),
   },
   {
-    path: '/portfolio',
-    name: 'Portfolio',
-    component: () => import('../views/Portfolio.vue'),
+    path: '/yc',
+    name: 'YueCai',
+    component: () => import('../views/YueCaiShell.vue'),
+    children: [
+      { path: '', redirect: '/yc/hrp' },
+      { path: 'hrp', name: 'HrpConfig', component: () => import('../views/HrpConfig.vue') },
+      { path: 'ai', name: 'AiResearch', component: () => import('../views/AiResearch.vue') },
+      { path: 'backtest', name: 'Backtest', component: () => import('../views/Backtest.vue') },
+      { path: 'whitebox', name: 'Whitebox', component: () => import('../views/WhiteboxView.vue') },
+    ],
   },
   {
-    path: '/whitebox',
-    name: 'Whitebox',
-    component: () => import('../views/Whitebox.vue'),
+    path: '/diag',
+    name: 'Diagnostics',
+    component: () => import('../views/Diagnostics.vue'),
   },
   {
-    path: '/report',
-    name: 'Report',
-    component: () => import('../views/Report.vue'),
+    path: '/smart',
+    name: 'SmartSelection',
+    component: () => import('../views/SmartSelectionManager.vue'),
   },
 ]
 

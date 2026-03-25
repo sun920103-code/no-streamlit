@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.v1 import portfolio, analysis, report
+from api.v1 import portfolio, analysis, report, routers_data, routers_quant, routers_ai, routers_export, routers_macro
 from core.config import settings
 
 # ── 日志配置 ──
@@ -41,10 +41,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── 注册路由 ──
+app.include_router(routers_data.router,      prefix="/api/v1/data",      tags=["外部数据"])
+app.include_router(routers_ai.router,        prefix="/api/v1",           tags=["AI核心投委会"])
+app.include_router(routers_export.router,    prefix="/api/v1",           tags=["导出与报表"])
 app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["组合管理"])
 app.include_router(analysis.router,  prefix="/api/v1/analysis",  tags=["分析计算"])
 app.include_router(report.router,    prefix="/api/v1/report",    tags=["报告生成"])
+app.include_router(routers_quant.router, prefix="/api/v1")
 
 
 # ── 健康检查 ──

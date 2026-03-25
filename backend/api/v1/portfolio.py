@@ -46,27 +46,37 @@ async def get_portfolio_config():
     )
 
 
-@router.post("/rebalance", response_model=RebalanceResponse)
+@router.post("/rebalance")
 async def trigger_rebalance(
     request: RebalanceRequest,
     background_tasks: BackgroundTasks,
 ):
     """
-    触发组合再平衡计算 (异步)
-
-    返回 task_id，前端可通过 WebSocket 或轮询获取进度。
+    触发组合再平衡计算 (模拟返回 API Contract Interface 2)
     """
-    import uuid
-    task_id = str(uuid.uuid4())
-
-    # TODO: Phase 2 — 对接 Celery 异步任务
-    # background_tasks.add_task(run_rebalance, task_id, request)
-
-    return RebalanceResponse(
-        task_id=task_id,
-        status="queued",
-        message="再平衡任务已提交，请通过 /status/{task_id} 查询进度",
-    )
+    # TODO: Phase 2 — 真实对接 Celery 异步任务
+    return {
+        "status": "success",
+        "summary_text": "客户持仓与基准相比差异巨大，重点加配宏观高景气品种...",
+        "instructions": [
+            {
+               "code": "000979.OF",
+               "name": "核心资产精选混合",
+               "asset_class": "大盘价值",
+               "action_tag": "加仓", 
+               "delta_amount": 10500,  
+               "delta_w": 0.025
+            },
+            {
+               "code": "002657.OF",
+               "name": "新能源主题",
+               "asset_class": "高成长",
+               "action_tag": "清仓", 
+               "delta_amount": -50000,
+               "delta_w": -0.150
+            }
+        ]
+    }
 
 
 @router.get("/status/{task_id}")

@@ -1,11 +1,95 @@
 """
-分析计算 API — 宏观分析、风格归因、压力测试
+分析计算 API — 宏观分析、风格归因、压力测试、持仓解析
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File
 from pydantic import BaseModel
 from typing import Dict, List, Optional
+import re
+import io
 
 router = APIRouter()
+
+
+@router.post("/parse-holdings")
+async def parse_holdings(file: UploadFile = File(...)):
+    """
+    解析客户持仓 CSV 文件
+
+    支持多编码（utf-8-sig / gbk / utf-8）和智能列识别。
+    返回基金代码、名称、金额、占比。
+    """
+    import pandas as pd
+
+    raw = await file.read()
+
+    # 多编码容错读取
+    df = None
+    for enc in ['utf-8-sig', 'gbk', 'utf-8', 'gb2312', 'gb18030']:
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=enc, dtype=str)
+            break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+
+    if df is None or df.empty:
+        return {"status": "error", "message": "CSV 编码无法识别或内容为空"}
+
+    # 智能列识别
+    code_col = next((c for c in df.columns if any(k in c for k in ['代码', 'code', 'ticker', '编码'])), None)
+    name_col = next((c for c in df.columns if any(k in c for k in ['名称', '简称', 'name'])), None)
+    amt_col = next((c for c in df.columns if any(k in c for k in ['金额', '市值', '本金', '权重', 'amount'])), None)
+
+    if not code_col:
+        return {"status": "error", "message": '未找到基金代码列。CSV 必须包含标题含"代码"的列。'}
+    if not amt_col:
+        return {"status": "error", "message": '未找到金额列。CSV 必须包含标题含"金额"、"市值"或"本金"的列。'}
+
+    unit_multiplier = 10000.0 if '万' in amt_col else 1.0
+    holdings = []
+    skipped = []
+    total = 0.0
+
+    for _, row in df.iterrows():
+        raw_code = str(row[code_col]).strip()
+        raw_name = str(row.get(name_col, '')).strip() if name_col else ''
+        raw_amt = str(row[amt_col]).strip().replace(',', '').replace('%', '')
+
+        if raw_code.lower() in ('nan', 'none', ''):
+            continue
+        if any(kw in raw_code for kw in ['合计', '总计']):
+            continue
+
+        clean_code = raw_code.split('.')[0].strip()
+        if not re.match(r'^\d{4,6}$', clean_code):
+            skipped.append(f"{raw_code} — 非有效基金代码")
+            continue
+
+        bare = clean_code.zfill(6)
+        try:
+            amt = float(raw_amt) * unit_multiplier
+        except (ValueError, TypeError):
+            amt = 0.0
+
+        if amt > 0:
+            name = raw_name if raw_name.lower() not in ('nan', 'none', '') else ''
+            holdings.append({
+                "code": bare,
+                "name": name,
+                "amount": round(amt, 2),
+            })
+            total += amt
+
+    # 计算占比
+    for h in holdings:
+        h["proportion"] = round(h["amount"] / total, 4) if total > 0 else 0
+
+    return {
+        "status": "ok",
+        "holdings": holdings,
+        "total": round(total, 2),
+        "count": len(holdings),
+        "skipped": skipped,
+    }
 
 
 class MacroRegimeResponse(BaseModel):
@@ -72,13 +156,26 @@ async def run_style_analysis(request: StyleAnalysisRequest):
 
 @router.get("/stress-test")
 async def run_stress_test():
-    """运行压力测试场景"""
-    # TODO: Phase 2 — 对接 stress_testing
+    """运行压力测试场景 (模拟返回 API Contract Interface 3 KPI)"""
     return {
-        "scenarios": [
-            {"name": "2020 新冠冲击", "portfolio_impact": -0.018},
-            {"name": "2022 债市调整", "portfolio_impact": -0.012},
-            {"name": "利率上行100bp", "portfolio_impact": -0.008},
-        ],
-        "status": "mock_data",
+      "kpi_list": [
+        {
+          "strategy_label": "📋 客户持仓",
+          "ann_return": 0.0520,
+          "ann_volatility": 0.1250,
+          "sharpe_ratio": 1.20,
+          "max_drawdown": -0.1520,
+          "calmar_ratio": 0.34,
+          "win_rate": 0.550
+        },
+        {
+          "strategy_label": "⚖️ HRP 配置 [沪深300基准]",
+          "ann_return": 0.0810,
+          "ann_volatility": 0.1010,
+          "sharpe_ratio": 1.85,
+          "max_drawdown": -0.0980,
+          "calmar_ratio": 0.82,
+          "win_rate": 0.612
+        }
+      ]
     }
