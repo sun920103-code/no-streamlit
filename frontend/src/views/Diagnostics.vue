@@ -148,14 +148,14 @@
           <WindDashboard :holdings="holdings" @success="handleWindSuccess" />
 
           <div class="card">
-            <div class="card-title">🔬 因子映射 & RP 体检</div>
+            <div class="card-title">🔬 因子映射 & 象限配置体检</div>
             <p style="color:var(--text-secondary);font-size:13px;">
-              将持仓基金映射到 8 大资产类别，计算 HRP 均衡权重，对比当前持仓与最优配置的偏离度。
+              将持仓基金映射到 8 大资产类别，计算宏观象限对应配置权重，对比当前持仓与最优配置的偏离度。
             </p>
             <AsyncButton 
               :action="runHrpOptimization"
               type="primary"
-              text="⚖️ 执行 HRP 风险平价配置"
+              text="🧭 执行宏观象限对应配置"
               style="margin-top:12px;"
             />
 
@@ -398,7 +398,7 @@ const hrpResultTable = ref(null)
 
 async function runHrpOptimization() {
   if (holdings.value.length === 0) {
-    throw new Error("无持仓数据，无法进行 HRP 配置");
+    throw new Error("无持仓数据，无法进行宏观象限配置");
   }
   
   // 1. Prepare inputs
@@ -416,7 +416,7 @@ async function runHrpOptimization() {
   });
   
   if (hrpRes.data.status === "error") {
-    throw new Error(hrpRes.data.message || "HRP模型失败");
+    throw new Error(hrpRes.data.message || "象限配置模型失败");
   }
   
   const targetWeights = hrpRes.data.target_weights;
@@ -532,7 +532,7 @@ function getStrategiesPayload() {
   if (hrpResultTable.value) {
     const w = { ...clientWeights };
     hrpResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
-    strats.push({ label: '⚖️ HRP 配置 [沪深300基准]', weights: w });
+    strats.push({ label: '🧭 宏观象限对应配置 [沪深300基准]', weights: w });
   }
   if (aiNewsResultTable.value) {
     const w = { ...clientWeights };
