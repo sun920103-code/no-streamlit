@@ -2,22 +2,23 @@
   <div class="smart-selection-layout">
     <ConfigSidebar />
     <div class="smart-selection-container">
+
+    <!-- ═══ Step 1: 一键启动 (EDB + 象限配置) ═══ -->
     <div class="header-actions">
        <div class="left-actions">
-         <AsyncButton :action="fetchEdb" type="primary" text="🚀 启动 EDB 数据检索提取" />
-         <AsyncButton :action="runDebate" style="background:#8B5CF6;border-color:#8B5CF6;" text="🧠 运行虚拟投研分析会" />
+         <AsyncButton :action="runFullPipeline" type="primary" text="🚀 一键配置 (EDB + 宏观象限底仓)" />
        </div>
-       <div class="right-actions" v-if="debateFinished">
-         <AsyncButton :action="extractAllocation" style="background:#F59E0B;border-color:#F59E0B;" text="🎯 提取大类资产配置" />
-         <AsyncButton v-if="targetAllocation" :action="runMatchFunds" style="background:#10B981;border-color:#10B981;" text="⚡ 一键智能选基配置" />
+       <div class="right-actions" v-if="targetAllocation">
+         <AsyncButton :action="runMatchFunds" style="background:#10B981;border-color:#10B981;" text="⚡ 一键智能选基配置" />
        </div>
     </div>
 
+    <!-- ═══ 主面板: EDB + 象限底仓 + 选基结果 ═══ -->
     <div class="content-grid">
-      <!-- Left: EDB Macro & Asset Alloc Doughnut -->
+      <!-- Left: EDB 宏观 + 象限定位 + 配置占比 -->
       <div class="left-col">
         <div class="card edb-card">
-          <div class="card-title">宏观特征引擎 (EDB)</div>
+          <div class="card-title">📡 宏观特征引擎 (EDB)</div>
           <p v-if="!edbData" class="empty-text">等待检索...</p>
           <div v-else>
             <div class="metric-block">
@@ -36,15 +37,46 @@
           </div>
         </div>
 
-        <div class="card alloc-card" v-show="targetAllocation">
-          <div class="card-title">自上而下大类配置占比</div>
+        <!-- 🧭 宏观象限定位 (底仓来源) -->
+        <div class="card" v-if="quadrantData" style="margin-top:16px;">
+          <div class="card-title">🧭 宏观象限定位</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <div :style="{width:'40px',height:'40px',borderRadius:'10px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'20px',background: qColors[quadrantData.current_quadrant]?.bg || '#EDF2F7'}">
+              {{ qColors[quadrantData.current_quadrant]?.icon || '🧭' }}
+            </div>
+            <div>
+              <div style="font-weight:700;font-size:15px;">{{ quadrantData.quadrant_label }}</div>
+              <div style="color:var(--text-secondary);font-size:12px;">{{ quadrantData.quadrant_description }}</div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;">
+            <div style="padding:6px 8px;background:#F0FDF4;border-radius:6px;border-left:2px solid #10B981;">
+              <div style="color:var(--text-muted);font-size:10px;">利好</div>
+              <div style="color:#10B981;font-weight:600;">{{ (quadrantData.best_assets || []).join(', ') }}</div>
+            </div>
+            <div style="padding:6px 8px;background:#FEF2F2;border-radius:6px;border-left:2px solid #EF4444;">
+              <div style="color:var(--text-muted);font-size:10px;">承压</div>
+              <div style="color:#EF4444;font-weight:600;">{{ (quadrantData.worst_assets || []).join(', ') }}</div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:8px;">
+            Markov: <b>{{ quadrantData.markov_regime }}</b> ({{ ((quadrantData.markov_confidence||0)*100).toFixed(0) }}%)
+          </div>
+        </div>
+
+        <!-- 底仓配置环形图 -->
+        <div class="card alloc-card" v-show="targetAllocation" style="margin-top:16px;">
+          <div class="card-title">🧭 宏观象限对应配置 (底仓)</div>
           <div ref="doughnutChartRef" style="height: 300px; width:100%;"></div>
         </div>
       </div>
 
-      <!-- Center: Multi-Agent Debate Timeline -->
+      <!-- Center: 虚拟投研辩论实况 -->
       <div class="center-col card">
-         <div class="card-title">虚拟投研辩论实况 (SSE)</div>
+         <div class="card-title">🧠 虚拟投研辩论实况 (SSE)</div>
+         <div style="margin-bottom:12px;">
+           <AsyncButton :action="runDebate" style="background:#8B5CF6;border-color:#8B5CF6;width:100%;" text="🧠 运行虚拟投研分析会" />
+         </div>
          <div class="debate-stream" ref="debateStreamRef">
            <div v-for="(log, idx) in debateLogs" :key="idx" class="log-item fade-in">
               <span class="log-bubble">{{ log }}</span>
@@ -60,9 +92,9 @@
          </div>
       </div>
 
-      <!-- Right: Matched Funds & Heatmap -->
+      <!-- Right: 选基结果 & 热力矩阵 -->
       <div class="right-col card" v-show="matchedFunds.length > 0">
-         <div class="card-title">一键配置结果 (Top-Down Match)</div>
+         <div class="card-title">⚡ 选基配置结果 (Top-Down Match)</div>
          <table class="holdings-table">
           <thead>
             <tr>
@@ -87,6 +119,24 @@
       </div>
     </div>
 
+    <!-- ═══ MBL 因子传导链 (底仓生成依据透明展示) ═══ -->
+    <div v-if="mblResult" class="card" style="margin-top:24px;">
+      <div class="card-title">🎯 因子传导链条 (底仓生成依据)</div>
+      <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+        <div v-for="item in mblResult.transmission_chain" :key="item.factor"
+             style="padding:10px 14px;border-radius:8px;text-align:center;min-width:90px;"
+             :style="{background: item.score>0?'#F0FDF4':'#FEF2F2',border:'1px solid '+(item.score>0?'#10B981':'#EF4444')}">
+          <div style="font-weight:600;font-size:12px;">{{ item.factor }}</div>
+          <div style="font-size:16px;font-weight:700;" :style="{color:item.score>0?'#10B981':'#EF4444'}">{{ item.score>0?'+':'' }}{{ item.score }}</div>
+          <div style="font-size:10px;color:var(--text-muted);">×{{ item.regime_modifier }}</div>
+        </div>
+      </div>
+      <div v-if="mblResult.defense_log && mblResult.defense_log.length"
+           style="padding:10px 14px;border-radius:6px;background:#FFFBEB;border:1px solid #FDE68A;font-size:12px;">
+        <div v-for="(log, idx) in mblResult.defense_log" :key="idx" style="margin-bottom:2px;color:var(--text-secondary);">{{ log }}</div>
+      </div>
+    </div>
+
     <!-- Campaign 12: Core Fund Pool Whitebox -->
     <CoreFundPoolWhitebox />
 
@@ -103,7 +153,7 @@
 <script setup>
 import { ref, nextTick } from 'vue'
 import * as echarts from 'echarts'
-import { fetchEdbData, calculateAssetAllocation, matchFunds } from '../api'
+import { fetchEdbData, calculateAssetAllocation, matchFunds, getMacroQuadrant, optimizeFactorRp } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
 import ConfigSidebar from '../components/ConfigSidebar.vue'
 import AdvancedMetrics from '../components/AdvancedMetrics.vue'
@@ -121,24 +171,63 @@ const debateViews = ref(null)
 const debateStreamRef = ref(null)
 
 const targetAllocation = ref(null)
+const quadrantData = ref(null)
+const mblResult = ref(null)
 const doughnutChartRef = ref(null)
 const matchedFunds = ref([])
 const heatmapRef = ref(null)
 let doughnutInstance = null
 let heatmapInstance = null
 
-async function fetchEdb() {
-  const res = await fetchEdbData();
-  edbData.value = res.data.data;
+const qColors = {
+  recovery: { bg: '#ECFDF5', icon: '🌱' },
+  overheat: { bg: '#FEF3C7', icon: '🔥' },
+  stagflation: { bg: '#FEE2E2', icon: '⚠️' },
+  deflation: { bg: '#DBEAFE', icon: '❄️' },
 }
 
+// ═══════════════════════════════════════════
+// 🚀 一键配置: EDB → 宏观象限 → 底仓
+// ═══════════════════════════════════════════
+async function runFullPipeline() {
+  // Step 1: EDB 数据下载
+  const edbRes = await fetchEdbData();
+  edbData.value = edbRes.data.data;
+
+  // Step 2: 宏观象限定位
+  const defaultFactorScores = {
+    "经济增长": 0.3, "通胀商品": -0.2, "利率环境": 0.4,
+    "信用扩张": 0.1, "海外环境": 0.0, "市场情绪": 0.2,
+  }
+  const qRes = await getMacroQuadrant({ factor_scores: defaultFactorScores })
+  quadrantData.value = qRes.data
+
+  // Step 3: 因子风险平价 → 底仓配置
+  const rpRes = await optimizeFactorRp({
+    factor_scores: defaultFactorScores,
+    apply_regime: true,
+    max_volatility: configStore.maxVolatility || 0.15,
+  })
+  mblResult.value = rpRes.data
+  
+  // 将因子风险平价的目标权重转化为 targetAllocation 格式
+  if (rpRes.data && rpRes.data.target_weights) {
+    targetAllocation.value = {}
+    for (const [asset, w] of Object.entries(rpRes.data.target_weights)) {
+      targetAllocation.value[asset] = +(w * 100).toFixed(1)
+    }
+  }
+
+  await nextTick()
+  renderDoughnut()
+}
+
+// ═══ AI 虚拟投研辩论 (SSE 流式) ═══
 async function runDebate() {
   debateLogs.value = [];
   isDebating.value = true;
   debateFinished.value = false;
   debateViews.value = null;
-  targetAllocation.value = null;
-  matchedFunds.value = [];
 
   try {
     const response = await fetch('http://localhost:8000/api/v1/simulate_smart_selection_debate', {
@@ -159,7 +248,7 @@ async function runDebate() {
       
       buffer += decoder.decode(value, { stream: true });
       let lines = buffer.split("\n\n");
-      buffer = lines.pop(); // keep the last partial chunk
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (line.startsWith("data: ")) {
@@ -168,7 +257,6 @@ async function runDebate() {
             const parsed = JSON.parse(dataStr);
             if (parsed.type === 'log') {
               debateLogs.value.push(parsed.content);
-              // Auto-scroll
               nextTick(() => {
                 const el = debateStreamRef.value;
                 if (el) el.scrollTop = el.scrollHeight;
@@ -192,15 +280,7 @@ async function runDebate() {
   }
 }
 
-async function extractAllocation() {
-  const payload = { debate_views: debateViews.value || {} };
-  const res = await calculateAssetAllocation(payload);
-  targetAllocation.value = res.data.target_allocation;
-  
-  await nextTick();
-  renderDoughnut();
-}
-
+// ═══ 一键智能选基 ═══
 async function runMatchFunds() {
   const payload = { 
     target_allocation: targetAllocation.value,
@@ -215,6 +295,7 @@ async function runMatchFunds() {
   renderHeatmap(res.data.matched_funds.map(f => f.name), res.data.correlation_matrix);
 }
 
+// ═══ ECharts ═══
 function renderDoughnut() {
   if (!doughnutChartRef.value || !targetAllocation.value) return;
   if (!doughnutInstance) doughnutInstance = echarts.init(doughnutChartRef.value);
@@ -224,25 +305,19 @@ function renderDoughnut() {
     value: targetAllocation.value[k]
   })).filter(x => x.value > 0);
 
-  const option = {
+  doughnutInstance.setOption({
     tooltip: { trigger: 'item', formatter: '{b}: {c}%' },
     legend: { bottom: '0%', textStyle: { fontSize: 11 } },
-    series: [
-      {
-        type: 'pie',
-        radius: ['40%', '70%'],
-        avoidLabelOverlap: false,
-        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
-        label: { show: false, position: 'center' },
-        emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
-        labelLine: { show: false },
-        data: data
-      }
-    ],
-    color: ['#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#6366F1', '#8B5CF6']
-  };
-  
-  doughnutInstance.setOption(option, true);
+    series: [{
+      type: 'pie', radius: ['40%', '70%'], center: ['50%', '50%'],
+      itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
+      label: { show: false, position: 'center' },
+      emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
+      labelLine: { show: false },
+      data: data
+    }],
+    color: ['#EF4444', '#3B82F6', '#10B981', '#F59E0B', '#6366F1', '#8B5CF6', '#EC4899', '#14B8A6']
+  }, true);
 }
 
 function renderHeatmap(fundNames, corrMatrix) {
@@ -256,26 +331,21 @@ function renderHeatmap(fundNames, corrMatrix) {
     }
   }
 
-  const option = {
+  heatmapInstance.setOption({
     tooltip: { position: 'top' },
     grid: { left: '15%', right: '5%', bottom: '15%', top: '5%' },
     xAxis: { type: 'category', data: fundNames, axisLabel: { interval: 0, rotate: 30, fontSize: 10 } },
     yAxis: { type: 'category', data: fundNames, axisLabel: { interval: 0, fontSize: 10 } },
     visualMap: {
-      min: 0, max: 1,
-      calculable: true,
-      orient: 'horizontal', left: 'center', bottom: -10,
+      min: 0, max: 1, calculable: true, orient: 'horizontal', left: 'center', bottom: -10,
       inRange: { color: ['#E0F2FE', '#3B82F6', '#1E3A8A'] }
     },
     series: [{
-      type: 'heatmap',
-      data: data,
+      type: 'heatmap', data: data,
       label: { show: true, fontSize: 9, color: '#fff' },
       emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0, 0, 0, 0.5)' } }
     }]
-  };
-  
-  heatmapInstance.setOption(option, true);
+  }, true);
 }
 </script>
 
@@ -350,7 +420,7 @@ function renderHeatmap(fundNames, corrMatrix) {
   justify-content: space-between;
 }
 .debate-stream {
-  height: 500px;
+  height: 400px;
   overflow-y: auto;
   padding-right: 8px;
   font-family: 'JetBrains Mono', monospace;
