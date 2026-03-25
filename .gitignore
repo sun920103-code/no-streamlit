@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+venv/
+fof_env/
+.env
+*.db
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data & Logs
+data/
+logs/
+*.csv
+*.xlsx
+
+# Old project backup
+20260325/
+
+# Misc
+*.exe
+*.doc
+*.docx
+.pytest_cache/
+.streamlit/
