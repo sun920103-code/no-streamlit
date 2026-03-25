@@ -54,7 +54,7 @@
       </table>
     </div>
 
-    <!-- 因子→资产 敏感度矩阵 -->
+    <!-- 因子→资产 敏感度矩阵 (真实数据) -->
     <div class="card" style="margin-bottom:24px;">
       <div class="card-title">🧮 6×8 宏观因子敏感度矩阵</div>
       <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
@@ -65,7 +65,7 @@
 
     <!-- 融合过程 -->
     <div class="card">
-      <div class="card-title">🔗 BL 融合过程</div>
+      <div class="card-title">🔗 决策融合管线</div>
       <div style="padding:16px 0;">
         <div v-for="step in fusionSteps" :key="step.id" style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px;">
           <div style="width:28px;height:28px;border-radius:50%;background:var(--sovereign-accent);color:#FFF;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">
@@ -104,10 +104,10 @@ const blViews = ref([
 ])
 
 const fusionSteps = ref([
-  { id: 1, title: '市场均衡收益 (隐含先验)', desc: '从 HRP 权重反推均衡收益向量 π = δΣw' },
-  { id: 2, title: 'AI 观点矩阵 (P, Q, Ω)', desc: '将新闻因子得分和研报分析结果映射为 BL 观点' },
+  { id: 1, title: '市场均衡收益 (隐含先验)', desc: '从宏观象限对应配置权重反推均衡收益向量 π = δΣw' },
+  { id: 2, title: 'AI 因子得分 → 因子载荷矩阵传导', desc: 'MBL: Expected_Return = Factor_Scores × Loadings × Regime_Modifiers' },
   { id: 3, title: 'Bayesian 后验融合', desc: 'E[r] = [(τΣ)⁻¹ + P\'Ω⁻¹P]⁻¹ [(τΣ)⁻¹π + P\'Ω⁻¹Q]' },
-  { id: 4, title: '约束优化', desc: '在流动性覆盖、单一产品上限、最大回撤等约束下求最优权重' },
+  { id: 4, title: 'CVaR 尾部风控约束', desc: '在 95% CVaR 极端损失阈值与马尔可夫象限防御下求最优权重' },
   { id: 5, title: '风控叠加', desc: 'NLP 情绪倾斜 ≤ ±10%, 波动率目标约束, EGARCH 风险调节' },
 ])
 
@@ -119,13 +119,21 @@ onMounted(() => {
 
 function initHeatmap() {
   const chart = echarts.init(heatmapChart.value)
-  const factors = ['市场情绪', '利率', '信用', '通胀', '海外', '流动性']
-  const assets = ['货币现金','纯债固收','混合债券','短债理财','固收增强','量化对冲','股票多头','黄金商品']
+  const factors = ['市场情绪', '海外环境', '信用扩张', '利率环境', '通胀商品', '经济增长']
+  const assets = ['大盘核心','科技成长','红利防守','纯债固收','混合债券','短债理财','黄金商品','海外QDII']
+  // 真实因子载荷矩阵数据 (对齐 factor_loadings.py)
+  const matrixData = [
+    [0.60, 0.80, 0.20, -0.30, -0.10, -0.05, 0.00, 0.40],
+    [0.20, 0.30, 0.10, 0.10, 0.05, 0.00, 0.30, 0.80],
+    [0.50, 0.40, 0.30, -0.30, 0.80, 0.10, 0.10, 0.00],
+    [0.50, 0.70, 0.20, 0.80, 0.60, 0.30, 0.30, 0.20],
+    [0.10, -0.10, 0.20, -0.30, -0.20, -0.10, 0.80, -0.10],
+    [0.80, 0.60, 0.15, -0.40, -0.10, -0.05, -0.05, 0.30],
+  ]
   const data = []
   for (let i = 0; i < factors.length; i++) {
     for (let j = 0; j < assets.length; j++) {
-      const v = (Math.random() - 0.5) * 2
-      data.push([j, i, +v.toFixed(2)])
+      data.push([j, i, matrixData[i][j]])
     }
   }
   chart.setOption({

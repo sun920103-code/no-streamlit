@@ -239,6 +239,125 @@
           </div>
         </div>
 
+        <!-- Page 4: 🧭 宏观象限调仓 -->
+        <div v-if="activePage === 3" class="fade-in">
+          <div class="section-title">🧭 宏观象限调仓</div>
+
+          <!-- 四象限定位 -->
+          <div class="card" style="margin-bottom:24px;">
+            <div class="card-title">🧭 桥水全天候四象限定位</div>
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
+              以经济增长和通胀两个核心因子坐标定位当前所处宏观象限，自动匹配最优攻防资产。
+            </p>
+            <div style="display:flex;gap:24px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:300px;">
+                <div ref="quadrantChartRef" style="height:340px;"></div>
+              </div>
+              <div style="flex:1;min-width:280px;">
+                <div v-if="quadrantData" style="padding:8px 0;">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                    <div :style="{width:'48px',height:'48px',borderRadius:'12px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'24px',background: qColors[quadrantData.current_quadrant]?.bg || '#EDF2F7'}">
+                      {{ qColors[quadrantData.current_quadrant]?.icon || '🧭' }}
+                    </div>
+                    <div>
+                      <div style="font-weight:700;font-size:18px;">{{ quadrantData.quadrant_label }}</div>
+                      <div style="color:var(--text-secondary);font-size:13px;">{{ quadrantData.quadrant_description }}</div>
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+                    <div style="padding:10px 12px;border-radius:8px;background:#F0FDF4;border-left:3px solid #10B981;">
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">利好资产</div>
+                      <div style="color:#10B981;font-weight:600;font-size:13px;">{{ (quadrantData.best_assets || []).join(', ') }}</div>
+                    </div>
+                    <div style="padding:10px 12px;border-radius:8px;background:#FEF2F2;border-left:3px solid #EF4444;">
+                      <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">承压资产</div>
+                      <div style="color:#EF4444;font-weight:600;font-size:13px;">{{ (quadrantData.worst_assets || []).join(', ') }}</div>
+                    </div>
+                  </div>
+                  <div style="font-size:12px;color:var(--text-muted);">
+                    🔗 Markov: <b>{{ quadrantData.markov_regime }}</b> ({{ ((quadrantData.markov_confidence||0)*100).toFixed(0) }}%)
+                  </div>
+                </div>
+                <div v-else style="text-align:center;padding:20px;">
+                  <AsyncButton :action="loadQuadrant" type="primary" text="🧭 加载宏观象限" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MBL 因子传导 -->
+          <div class="card" style="margin-bottom:24px;">
+            <div class="card-title">🎯 MBL 因子传导引擎</div>
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
+              AI 因子得分 → 因子载荷矩阵传导 → 大类资产目标权重，结果可用于客户持仓调仓。
+            </p>
+            <AsyncButton v-if="!mblResult" :action="runMbl" type="primary" text="🎯 运行 MBL 因子传导" />
+            <div v-if="mblResult">
+              <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+                <div v-for="item in mblResult.transmission_chain" :key="item.factor"
+                     style="padding:12px 16px;border-radius:10px;text-align:center;min-width:100px;transition:transform 0.2s;"
+                     :style="{background: item.score>0?'#F0FDF4':'#FEF2F2',border:'1px solid '+(item.score>0?'#10B981':'#EF4444')}">
+                  <div style="font-weight:600;font-size:13px;">{{ item.factor }}</div>
+                  <div style="font-size:18px;font-weight:700;" :style="{color:item.score>0?'#10B981':'#EF4444'}">{{ item.score>0?'+':'' }}{{ item.score }}</div>
+                  <div style="font-size:11px;color:var(--text-muted);">×{{ item.regime_modifier }}={{ item.effective_score>0?'+':'' }}{{ item.effective_score }}</div>
+                </div>
+              </div>
+              <div style="margin-bottom:16px;">
+                <div style="font-weight:600;font-size:14px;margin-bottom:8px;">📊 资产预期收益信号 → 目标权重</div>
+                <div v-for="(w, asset) in mblResult.target_weights" :key="asset"
+                     style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                  <div style="width:80px;font-size:13px;">{{ asset }}</div>
+                  <div style="flex:1;height:14px;background:#F1F5F9;border-radius:4px;overflow:hidden;">
+                    <div :style="{width:w*100+'%',height:'100%',background:'var(--sovereign-accent)',borderRadius:'4px'}"></div>
+                  </div>
+                  <div style="width:50px;text-align:right;font-size:12px;font-weight:600;">{{ (w*100).toFixed(1) }}%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 因子风险平价 -->
+          <div class="card" style="margin-bottom:24px;">
+            <div class="card-title">🛡️ 宏观象限对应配置 (因子风险平价)</div>
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
+              根据当前象限自适应调整资产权重，确保各宏观因子的风险贡献均衡，结果可直接作为调仓依据。
+            </p>
+            <AsyncButton v-if="!factorRpResult" :action="runFactorRp" type="primary" text="🛡️ 生成象限对应配置" />
+            <div v-if="factorRpResult">
+              <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px;">
+                <div style="flex:1;min-width:240px;">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:8px;">⚖️ 目标权重</div>
+                  <div v-for="(w, asset) in factorRpResult.target_weights" :key="asset"
+                       style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <div style="width:80px;font-size:13px;">{{ asset }}</div>
+                    <div style="flex:1;height:14px;background:#F1F5F9;border-radius:4px;overflow:hidden;">
+                      <div :style="{width:w*100+'%',height:'100%',background:'var(--sovereign-accent)',borderRadius:'4px'}"></div>
+                    </div>
+                    <div style="width:45px;text-align:right;font-size:12px;font-weight:600;">{{ (w*100).toFixed(1) }}%</div>
+                  </div>
+                </div>
+                <div style="flex:1;min-width:240px;">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:8px;">🏗️ 因子风险贡献</div>
+                  <div v-for="(r, factor) in factorRpResult.factor_risk_contributions" :key="factor"
+                       style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <div style="width:65px;font-size:13px;">{{ factor }}</div>
+                    <div style="flex:1;height:14px;background:#F1F5F9;border-radius:4px;overflow:hidden;">
+                      <div :style="{width:r*100+'%',height:'100%',background:'#6366F1',borderRadius:'4px'}"></div>
+                    </div>
+                    <div style="width:45px;text-align:right;font-size:12px;font-weight:600;">{{ (r*100).toFixed(1) }}%</div>
+                  </div>
+                </div>
+              </div>
+              <div v-if="factorRpResult.defense_log && factorRpResult.defense_log.length"
+                   style="padding:12px 16px;border-radius:8px;background:#FFFBEB;border:1px solid #FDE68A;margin-top:12px;">
+                <div style="font-weight:600;font-size:14px;margin-bottom:4px;">🛡️ 象限防御执行记录</div>
+                <div v-for="(log, idx) in factorRpResult.defense_log" :key="idx"
+                     style="font-size:13px;margin-bottom:4px;color:var(--text-secondary);">{{ log }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Page 3: 业绩回测 (Now fully dynamic) -->
         <div v-if="activePage === 2 && holdings.length > 0" class="fade-in">
            <!-- Campaign 13: The 3-Way Grid Component -->
@@ -263,8 +382,9 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { uploadHoldings, optimizeHrp, getRebalanceInstructions, extractNewsViews, extractReportViews, optimizeBl } from '../api'
+import { ref, nextTick } from 'vue'
+import * as echarts from 'echarts'
+import { uploadHoldings, optimizeHrp, getRebalanceInstructions, extractNewsViews, extractReportViews, optimizeBl, getMacroQuadrant, optimizeMbl, optimizeFactorRp } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
 import WindDashboard from '../components/WindDashboard.vue'
 import RebalanceTable from '../components/RebalanceTable.vue'
@@ -447,7 +567,7 @@ function getPdfStatePayload() {
 
 const showAlert = (msg) => alert(msg)
 
-const subPages = ['📂 持仓分析', '🧠 AI 研判调仓', '📈 业绩回测']
+const subPages = ['📂 持仓分析', '🧠 AI 研判调仓', '📈 业绩回测', '🧭 宏观象限调仓']
 
 const pipelineSteps = [
   { icon: '📂', label: '上传 CSV' },
@@ -524,6 +644,71 @@ function downloadTemplate() {
   a.download = '客户持仓模板.csv'
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ═══ 宏观象限调仓 (Page 4) ═══
+const quadrantData = ref(null)
+const mblResult = ref(null)
+const factorRpResult = ref(null)
+const quadrantChartRef = ref(null)
+
+const qColors = {
+  recovery: { bg: '#ECFDF5', icon: '🌱' },
+  overheat: { bg: '#FEF3C7', icon: '🔥' },
+  stagflation: { bg: '#FEE2E2', icon: '⚠️' },
+  deflation: { bg: '#DBEAFE', icon: '❄️' },
+}
+
+// 默认因子得分（实际由 AI 委员会产出）
+const defaultFactorScores = {
+  "经济增长": 0.3, "通胀商品": -0.2, "利率环境": 0.4,
+  "信用扩张": 0.1, "海外环境": 0.0, "市场情绪": 0.2,
+}
+
+async function loadQuadrant() {
+  const res = await getMacroQuadrant({ factor_scores: defaultFactorScores })
+  quadrantData.value = res.data
+  await nextTick()
+  initQuadrantChart()
+}
+
+async function runMbl() {
+  const res = await optimizeMbl({ factor_scores: defaultFactorScores, apply_regime: true })
+  mblResult.value = res.data
+}
+
+async function runFactorRp() {
+  const res = await optimizeFactorRp({ factor_scores: defaultFactorScores, apply_regime: true })
+  factorRpResult.value = res.data
+}
+
+function initQuadrantChart() {
+  if (!quadrantChartRef.value || !quadrantData.value) return
+  const chart = echarts.init(quadrantChartRef.value)
+  const gx = quadrantData.value.growth_axis || 0
+  const ix = quadrantData.value.inflation_axis || 0
+  chart.setOption({
+    tooltip: {},
+    xAxis: { name: '通胀 →', min: -1, max: 1, nameLocation: 'end', axisLine: { lineStyle: { color: '#94A3B8' } }, splitLine: { show: false } },
+    yAxis: { name: '增长 ↑', min: -1, max: 1, nameLocation: 'end', axisLine: { lineStyle: { color: '#94A3B8' } }, splitLine: { show: false } },
+    grid: { left: 50, right: 30, top: 30, bottom: 40 },
+    graphic: [
+      { type: 'rect', left: '50%', top: 30, shape: { width: 200, height: 140 }, style: { fill: 'rgba(254,243,199,0.3)' } },
+      { type: 'rect', right: '50%', top: 30, shape: { width: 200, height: 140 }, style: { fill: 'rgba(236,253,245,0.3)' } },
+      { type: 'rect', left: '50%', bottom: 40, shape: { width: 200, height: 140 }, style: { fill: 'rgba(254,226,226,0.3)' } },
+      { type: 'rect', right: '50%', bottom: 40, shape: { width: 200, height: 140 }, style: { fill: 'rgba(219,234,254,0.3)' } },
+      { type: 'text', left: '27%', top: 45, style: { text: '🌱 复苏', fill: '#059669', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '62%', top: 45, style: { text: '🔥 过热', fill: '#D97706', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '62%', bottom: 55, style: { text: '⚠️ 滞胀', fill: '#DC2626', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '27%', bottom: 55, style: { text: '❄️ 衰退', fill: '#2563EB', fontSize: 13, fontWeight: 'bold' } },
+    ],
+    series: [{
+      type: 'scatter', symbolSize: 24, data: [[ix, gx]],
+      itemStyle: { color: '#F97316', borderColor: '#FFF', borderWidth: 3, shadowBlur: 12, shadowColor: 'rgba(249,115,22,0.5)' },
+      label: { show: true, formatter: '当前', position: 'top', fontSize: 12, fontWeight: 'bold', color: '#F97316' },
+    }],
+  })
+  window.addEventListener('resize', () => chart.resize())
 }
 </script>
 

@@ -51,6 +51,13 @@ class HrpOptimizeResponse(BaseModel):
     portfolio_volatility: float
     message: Optional[str] = None
 
+class CvarOptimizeResponse(BaseModel):
+    status: str
+    target_weights: Dict[str, float]
+    expected_return: float
+    cvar: float
+    message: Optional[str] = None
+
 
 class RebalanceInstructionItem(BaseModel):
     """严格对齐《API 数据协议合同》中的单条调仓指令"""
@@ -176,6 +183,74 @@ async def optimize_hrp_endpoint(payload: CovarianceMatrixPayload):
             portfolio_volatility=0.0,
             message=f"HRP算子崩溃: {str(e)}\n{traceback.format_exc()}"
         )
+
+@router.post("/optimize_cvar", response_model=CvarOptimizeResponse)
+async def optimize_cvar_endpoint(payload: CovarianceMatrixPayload):
+    """
+    执行 CVaR 尾部风险优化配置 (Expected Shortfall)
+    """
+    try:
+        from services.cvar_engine import optimize_cvar_mock
+        # 为了演示和由于缺失庞大历史收盘价数据，先调用带参数的Mock实现
+        result = optimize_cvar_mock(beta=0.95)
+        
+        return CvarOptimizeResponse(
+            status=result.get("status", "success"),
+            target_weights=result.get("weights", {}),
+            expected_return=result.get("expected_return", 0.0),
+            cvar=result.get("cvar", 0.0)
+        )
+    except Exception as e:
+        import traceback
+        return CvarOptimizeResponse(
+            status="error",
+            target_weights={},
+            expected_return=0.0,
+            cvar=0.0,
+            message=f"CVaR算子崩溃: {str(e)}\n{traceback.format_exc()}"
+        )
+
+
+class MblFactorRequest(BaseModel):
+    factor_scores: Dict[str, float] = Field(..., description="6大宏观因子得分 {因子名: [-1, 1]}")
+    apply_regime: bool = Field(default=True, description="是否启用四象限体制调控")
+    max_volatility: float = Field(default=0.15, description="承受最大年化波动率上限")
+
+@router.post("/optimize_mbl")
+async def optimize_mbl_endpoint(payload: MblFactorRequest):
+    """
+    MBL 宏观因子 Black-Litterman 优化
+    AI 委员会仅输出 6 因子得分，本引擎通过因子载荷矩阵自动传导至 8 大类资产权重。
+    """
+    try:
+        from services.mbl_engine import optimize_with_mbl
+        result = optimize_with_mbl(
+            factor_scores=payload.factor_scores,
+            max_volatility=payload.max_volatility,
+            apply_regime=payload.apply_regime,
+        )
+        return result
+    except Exception as e:
+        import traceback
+        return {"status": "error", "message": f"MBL引擎异常: {str(e)}\n{traceback.format_exc()}"}
+
+
+@router.post("/optimize_factor_rp")
+async def optimize_factor_risk_parity_endpoint(payload: MblFactorRequest):
+    """
+    🧭 宏观象限对应配置 (Factor Risk Parity)
+    将 HRP 从资产级升级为宏观因子级风险贡献平价。
+    """
+    try:
+        from services.factor_risk_parity import optimize_factor_risk_parity
+        result = optimize_factor_risk_parity(
+            factor_scores=payload.factor_scores,
+            max_volatility=payload.max_volatility,
+        )
+        return result
+    except Exception as e:
+        import traceback
+        return {"status": "error", "message": f"因子风险平价异常: {str(e)}\n{traceback.format_exc()}"}
 
 
 @router.post("/rebalance_instructions", response_model=RebalanceInstructionsResponse)

@@ -53,6 +53,12 @@ export const getCoreFundPool = () => api.get('/api/v1/data/get_core_fund_pool')
 export const getMacroRegime = () => api.get('/api/v1/analysis/macro/regime')
 export const getBLViews = () => api.get('/api/v1/analysis/whitebox/bl-views')
 export const getStressTest = () => api.get('/api/v1/analysis/stress-test')
+
+// ── 宏观量化引擎 (Markov + CVaR + MBL + Factor RP) ──
+export const optimizeMbl = (payload) => api.post('/api/v1/quant/optimize_mbl', payload)
+export const optimizeFactorRp = (payload) => api.post('/api/v1/quant/optimize_factor_rp', payload)
+export const optimizeCvar = (payload) => api.post('/api/v1/quant/optimize_cvar', payload)
+export const getMacroQuadrant = (payload) => api.post('/api/v1/macro/quadrant', payload || {})
 export const uploadHoldings = (file) => {
   const form = new FormData()
   form.append('file', file)

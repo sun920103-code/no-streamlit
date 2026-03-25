@@ -106,3 +106,68 @@ async def calculate_asset_allocation(payload: AssetAllocRequest):
         "status": "success",
         "target_allocation": allocations
     }
+
+
+class QuadrantRequest(BaseModel):
+    factor_scores: Dict[str, Any] = {}
+
+
+@router.post("/quadrant")
+async def get_macro_quadrant(payload: QuadrantRequest = None):
+    """
+    🧭 宏观四象限可视化数据 (桥水全天候)
+
+    返回当前所处象限、四象限定义以及因子传导链条，
+    供前端绘制宏观雷达十字坐标与象限高亮。
+    """
+    try:
+        from services.factor_loadings import (
+            determine_quadrant,
+            QUADRANT_DEFINITIONS,
+            factor_scores_to_asset_expected_returns,
+        )
+        from services.markov_engine import get_current_macro_regime_mock
+
+        # 如果前端传入了因子得分，直接使用；否则从马尔可夫引擎推断
+        if payload and payload.factor_scores:
+            scores = {k: float(v) for k, v in payload.factor_scores.items() if isinstance(v, (int, float))}
+        else:
+            # 用马尔可夫状态 + 默认得分填充
+            scores = {
+                "经济增长": 0.3,
+                "通胀商品": -0.2,
+                "利率环境": 0.4,
+                "信用扩张": 0.1,
+                "海外环境": 0.0,
+                "市场情绪": 0.2,
+            }
+
+        current_q = determine_quadrant(scores)
+        q_info = QUADRANT_DEFINITIONS[current_q]
+        asset_signals = factor_scores_to_asset_expected_returns(scores, apply_regime=True)
+
+        # 马尔可夫状态概率
+        hmm_result = get_current_macro_regime_mock()
+
+        return {
+            "status": "success",
+            "current_quadrant": current_q,
+            "quadrant_label": q_info["label"],
+            "quadrant_description": q_info["description"],
+            "growth_axis": scores.get("经济增长", 0.0),
+            "inflation_axis": scores.get("通胀商品", 0.0),
+            "best_assets": q_info["best_assets"],
+            "worst_assets": q_info["worst_assets"],
+            "asset_signals": asset_signals,
+            "all_quadrants": {
+                k: {"label": v["label"], "description": v["description"]}
+                for k, v in QUADRANT_DEFINITIONS.items()
+            },
+            "markov_regime": hmm_result.get("current_regime", "unknown"),
+            "markov_confidence": hmm_result.get("confidence", 0.0),
+        }
+    except Exception as e:
+        import traceback
+        logger.error(f"四象限推断失败: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+

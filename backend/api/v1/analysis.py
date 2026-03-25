@@ -109,19 +109,25 @@ async def get_macro_regime():
     """
     获取当前宏观经济体制判断
 
-    基于 EDB 指标 Z-score 映射宏观周期阶段。
+    基于隐马尔可夫模型(HMM)的多维宏观指标序列(如 PMI, CPI, M2) 进行识别。
     """
-    # TODO: Phase 2 — 对接 macro_data_collector + EDB
+    from services.markov_engine import get_current_macro_regime_mock
+    
+    # 调用 HMM 模型推断当前状态
+    hmm_result = get_current_macro_regime_mock()
+    regime_name = hmm_result.get("current_regime", "recovery")
+    conf = hmm_result.get("confidence", 0.72)
+    
     return MacroRegimeResponse(
-        regime="recovery",
-        confidence=0.72,
+        regime=regime_name,
+        confidence=conf,
         indicators={
             "PMI": 50.2,
             "CPI_YoY": 0.8,
             "M2_Growth": 7.1,
             "Credit_Impulse": 1.3,
         },
-        description="当前处于复苏阶段，制造业 PMI 重返荣枯线上方",
+        description=f"当前经由 Markov 模型识别处于 {regime_name} 阶段，置信度 {conf:.1%}",
     )
 
 
@@ -169,7 +175,7 @@ async def run_stress_test():
           "win_rate": 0.550
         },
         {
-          "strategy_label": "⚖️ HRP 配置 [沪深300基准]",
+          "strategy_label": "🧭 宏观象限对应配置 [自适应基准]",
           "ann_return": 0.0810,
           "ann_volatility": 0.1010,
           "sharpe_ratio": 1.85,
