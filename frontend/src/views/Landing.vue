@@ -12,7 +12,7 @@
         <div class="hero-card card-navy" @click="enterSmartSelection">
           <div class="hero-card-content">
             <h2 class="hero-title">粤财智选资产配置</h2>
-            <p class="hero-desc">基于 Black-Litterman 模型与 HRP 风险平价算法，为高净值客户提供多资产组合策略。深度优化资产配置权重。</p>
+            <p class="hero-desc">粤财信托精选资产池+宏观周期视角+CVaR风控，为高净值客户提供多资产组合策略。深度优化资产配置权重。</p>
           </div>
           <div class="hero-card-action">
             <button class="hero-btn hero-btn-navy">
@@ -27,7 +27,7 @@
         <div class="hero-card card-crimson" @click="enterDiag">
           <div class="hero-card-content">
             <h2 class="hero-title">资产配置智能分析</h2>
-            <p class="hero-desc hero-desc-light">系统自动化穿透式诊断，多维度分析现有组合风险。通过大数据量化模型检测投资人风险偏好。</p>
+            <p class="hero-desc hero-desc-light">系统自动化穿透式诊断，多维度分析现有组合风险。提供基于宏观因子和主观研报研判的资产配置建议。</p>
           </div>
           <div class="hero-card-action">
             <button class="hero-btn hero-btn-crimson">
