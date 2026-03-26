@@ -7,10 +7,10 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
 
 # ==========================================
-# 🚨 动态注入祖传代码路径 (D:\No Streamlimit\20260325)
+# 🚨 动态注入祖传代码路径 (D:\No Streamlit\20260325)
 # 确保绝对不改写底层量化算法，原汁原味调用
 # ==========================================
-LEGACY_SERVICES_DIR = r"D:\No Streamlimit\20260325"
+LEGACY_SERVICES_DIR = r"D:\No Streamlit\20260325"
 if LEGACY_SERVICES_DIR not in sys.path:
     # 插入到最前面，确保优先加载祖传代码
     sys.path.insert(0, LEGACY_SERVICES_DIR)

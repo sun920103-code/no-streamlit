@@ -1,21 +1,21 @@
 @echo off
-title No Streamlimit - Startup
+title No Streamlit - Startup
 
 echo ============================================
-echo    No Streamlimit Quant Platform
+echo    No Streamlit Quant Platform
 echo ============================================
 echo.
 
 :: Start Backend (FastAPI)
 echo [1/2] Starting backend service (FastAPI :8000) ...
-start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlimit\backend && python -m uvicorn main:app --reload --port 8000"
+start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlit\backend && python -m uvicorn main:app --reload --port 8000"
 
 :: Wait for backend to initialize
 timeout /t 4 /nobreak >nul
 
 :: Start Frontend (Vite)
 echo [2/2] Starting frontend service (Vite :5173) ...
-start "Frontend - Vue3" cmd /k "cd /d d:\No Streamlimit\frontend && npx vite"
+start "Frontend - Vue3" cmd /k "cd /d d:\No Streamlit\frontend && npx vite"
 
 :: Wait for frontend to initialize
 timeout /t 5 /nobreak >nul

@@ -1,4 +1,4 @@
-# No Streamlimit 🚀
+# No Streamlit 🚀
 
 > FOF 量化投资决策平台 — 告别 Streamlit 崩溃，拥抱稳定架构
 

@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 # 动态注入祖传代码路径
-LEGACY_SERVICES_DIR = r"D:\No Streamlimit\20260325"
+LEGACY_SERVICES_DIR = r"D:\No Streamlit\20260325"
 if LEGACY_SERVICES_DIR not in sys.path:
     sys.path.insert(0, LEGACY_SERVICES_DIR)
 
@@ -158,10 +158,15 @@ async def simulate_smart_selection_debate(payload: NewsExtractionRequest = None)
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 @router.post("/generate_market_review")
-async def generate_market_review_api(file: Optional[UploadFile] = File(None)):
+async def generate_market_review_api(files: Optional[List[UploadFile]] = File(None)):
     """
-    长驻市场回顾生成器 (SSE 流式通信)
-    逐步返回文字，防止前端白屏干等。
+    一周市场回顾生成器 (SSE 流式通信)
+    
+    流程:
+      1. 解析上传的因子报告 CSV/XLS (可多份)
+      2. 调用 Tavily AI Search 搜索全球主要资本市场、商品市场新闻
+      3. Kimi 提取结构化骨架
+      4. MiniMax 结合因子报告撰写 ~500 字市场回顾
     """
     import json
     try:
@@ -171,58 +176,95 @@ async def generate_market_review_api(file: Optional[UploadFile] = File(None)):
         async def err_gen(): yield f"data: {json.dumps(val, ensure_ascii=False)}\n\n"
         return StreamingResponse(err_gen(), media_type="text/event-stream")
 
+    # 预读取所有上传文件的内容 (必须在 async 上下文中完成)
+    uploaded_contents = []
+    if files:
+        for f in files:
+            if f.filename:  # 过滤空文件
+                content = await f.read()
+                if content:
+                    uploaded_contents.append((f.filename, content))
+
     async def sse_generator():
         q = asyncio.Queue()
         loop = asyncio.get_running_loop()
         
-        # 截获打字及进度回调
         def status_callback(msg: str):
-            # 将提示语或者进度信息发往前端
             loop.call_soon_threadsafe(q.put_nowait, {"type": "log", "content": msg})
             
         def worker():
             try:
-                # 解析可选的因子报告 csv
+                # ── 解析多份因子报告 CSV/XLS ──
                 style_factor_result = None
-                if file is not None:
+                if uploaded_contents:
                     try:
-                        import tempfile
-                        import os
-                        from services.smart_csv_parser import parse_multiple_factor_csvs
-                        content = file.file.read()
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-                            tmp.write(content)
-                            tmp_path = tmp.name
-                        style_factor_result = parse_multiple_factor_csvs([tmp_path])
-                        os.remove(tmp_path)
+                        from services.style_factor_parser import parse_multiple_factor_csvs, SUPPORTED_INDICES
+                        
+                        # 文件名关键词 → 指数名 映射 (与祖传 Streamlit 代码保持一致)
+                        _NAME_HINTS = {
+                            "沪深300": "沪深300", "hs300": "沪深300", "000300": "沪深300",
+                            "中证500": "中证500", "zz500": "中证500", "000905": "中证500",
+                            "万得全A": "万得全A", "全A": "万得全A", "881001": "万得全A", "wdqa": "万得全A",
+                            "中证1000": "中证1000", "zz1000": "中证1000", "000852": "中证1000",
+                            "中证2000": "中证2000", "zz2000": "中证2000", "932000": "中证2000",
+                            "创业板": "创业板指", "cyb": "创业板指", "399006": "创业板指",
+                            "上证50": "上证50", "sz50": "上证50", "000016": "上证50",
+                        }
+                        _idx_options = list(SUPPORTED_INDICES.keys())
+                        
+                        # 构建 (content_bytes, index_name) 元组列表
+                        files_with_indices = []
+                        _used_fallback_idx = 0
+                        for filename, content in uploaded_contents:
+                            fname_lower = filename.lower()
+                            matched_idx = None
+                            for hint, idx_name in _NAME_HINTS.items():
+                                if hint.lower() in fname_lower:
+                                    matched_idx = idx_name
+                                    break
+                            if not matched_idx:
+                                matched_idx = _idx_options[min(_used_fallback_idx, len(_idx_options) - 1)]
+                                _used_fallback_idx += 1
+                            files_with_indices.append((content, matched_idx))
+                        
+                        if files_with_indices:
+                            status_callback(f"📂 正在解析 {len(files_with_indices)} 份因子报告...")
+                            style_factor_result = parse_multiple_factor_csvs(files_with_indices)
+                            if style_factor_result and "error" not in style_factor_result:
+                                n_parsed = len(style_factor_result.get("parsed_indices", {}))
+                                status_callback(f"✅ 因子报告解析完成，识别 {n_parsed} 个指数因子数据")
+                            else:
+                                err_msg = style_factor_result.get("error", "未知") if style_factor_result else "空"
+                                status_callback(f"⚠️ 因子数据解析失败: {err_msg}")
+                                style_factor_result = None
                     except Exception as e:
-                        logger.warning(f"Failed to parse uploaded factor csv: {e}")
+                        import traceback as _tb
+                        logger.warning(f"Failed to parse uploaded factor files: {_tb.format_exc()}")
+                        status_callback(f"⚠️ 因子报告解析异常: {e}，将仅基于新闻搜索生成")
                 
+                # ── 调用核心生成流水线 (Tavily → Kimi → MiniMax) ──
                 md_text = generate_market_review(
                     style_factor_result=style_factor_result,
                     status_callback=status_callback
                 )
                 loop.call_soon_threadsafe(q.put_nowait, {"type": "finish", "report": md_text})
             except Exception as e:
+                import traceback
+                logger.error(f"Market review generation failed: {traceback.format_exc()}")
                 loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "content": str(e)})
 
-        # 使用线程池执行同步阻塞的 LLM 调用
         asyncio.create_task(run_in_threadpool(worker))
         
         while True:
             item = await q.get()
             
-            # 如果是 finish, 可以将最终的 Markdown 字符逐字抛出，形成前端的打字机流式特效
             if item["type"] == "finish":
                 report = item["report"]
-                # 通知前端开始接收正文流
                 yield f"data: {json.dumps({'type': 'start_stream'}, ensure_ascii=False)}\n\n"
-                # 按段或更小的 chunk 抛出
                 chunk_size = 5
                 for i in range(0, len(report), chunk_size):
                     chunk = report[i:i+chunk_size]
                     yield f"data: {json.dumps({'type': 'stream_chunk', 'content': chunk}, ensure_ascii=False)}\n\n"
-                    # 这里加0.05秒延迟模拟超级真实的打字机感觉
                     import time
                     time.sleep(0.02)
                 
@@ -233,7 +275,6 @@ async def generate_market_review_api(file: Optional[UploadFile] = File(None)):
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
                 break
             else:
-                # log messages (e.g. status)
                 yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(sse_generator(), media_type="text/event-stream")

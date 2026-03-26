@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.v1 import portfolio, analysis, report, routers_data, routers_quant, routers_ai, routers_export, routers_macro
+from api.v1 import portfolio, analysis, report, routers_data, routers_quant, routers_ai, routers_export, routers_macro, routers_rebalance
 from core.config import settings
 
 # ── 日志配置 ──
@@ -48,6 +48,8 @@ app.include_router(portfolio.router, prefix="/api/v1/portfolio", tags=["组合�
 app.include_router(analysis.router,  prefix="/api/v1/analysis",  tags=["分析计算"])
 app.include_router(report.router,    prefix="/api/v1/report",    tags=["报告生成"])
 app.include_router(routers_quant.router, prefix="/api/v1")
+app.include_router(routers_macro.router,    prefix="/api/v1",           tags=["宏观经济基座"])
+app.include_router(routers_rebalance.router, prefix="/api/v1",          tags=["一键配置调仓"])
 
 
 # ── 健康检查 ──
@@ -65,8 +67,6 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 FOF 量化平台后端启动成功")
-    logger.info(f"📊 总资金规模: {settings.total_capital_rmb / 1e8:.0f} 亿元")
-    logger.info(f"🎯 目标年化收益: {settings.target_annual_return * 100:.1f}%")
 
 
 if __name__ == "__main__":

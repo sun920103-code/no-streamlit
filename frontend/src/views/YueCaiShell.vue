@@ -85,8 +85,12 @@
           </p>
         </div>
 
-        <!-- Router view for the 4 sub-views -->
-        <router-view />
+        <!-- Router view for the 4 sub-views (KeepAlive for state persistence) -->
+        <router-view v-slot="{ Component }">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
 
         <div class="footer">
           © 2026 粤财信托 · Powered by Antigravity

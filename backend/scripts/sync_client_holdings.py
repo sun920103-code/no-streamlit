@@ -557,7 +557,7 @@ def main():
 
             logging.info(f"  ✅ wss 当日行情完成: {len(underlying_pct)} 只")
 
-            # ── Step 4b: w.wsd 补充 7 天最大跌幅 (逐只, 可选) ──
+            # ── Step 4b: w.wsd 补充 7 天逐日涨跌幅 (用于连续3日跌幅>10%检测) ──
             _drop_count = 0
             for stk in _und_list:
                 try:
@@ -569,6 +569,8 @@ def main():
                             _mi, _mv = min(_valid, key=lambda x: x[1])
                             if stk in underlying_pct:
                                 underlying_pct[stk]['max_drop_7d'] = _mv
+                                # 保存逐日涨跌幅数组 — 用于下游连续3日跌幅>10%检测
+                                underlying_pct[stk]['daily_pcts'] = [float(p) if p is not None and str(p) != 'nan' else None for p in _pcts]
                                 if hasattr(r7, 'Times') and r7.Times and _mi < len(r7.Times):
                                     _d = r7.Times[_mi]
                                     underlying_pct[stk]['drop_date'] = _d.strftime('%Y-%m-%d') if hasattr(_d, 'strftime') else str(_d)

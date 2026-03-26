@@ -58,6 +58,9 @@ export const getStressTest = () => api.get('/api/v1/analysis/stress-test')
 export const optimizeMbl = (payload) => api.post('/api/v1/quant/optimize_mbl', payload)
 export const optimizeFactorRp = (payload) => api.post('/api/v1/quant/optimize_factor_rp', payload)
 export const optimizeCvar = (payload) => api.post('/api/v1/quant/optimize_cvar', payload)
+export const runFullRebalance = (payload) => api.post('/api/v1/portfolio/run_full_rebalance', payload)
+// ── 一键配置调仓 SSE ──
+// Note: This uses fetch() + ReadableStream in SmartSelectionManager.vue, not axios
 export const getMacroQuadrant = (payload) => api.post('/api/v1/macro/quadrant', payload || {})
 export const uploadHoldings = (file) => {
   const form = new FormData()

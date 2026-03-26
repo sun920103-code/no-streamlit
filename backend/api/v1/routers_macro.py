@@ -7,7 +7,7 @@ from typing import Dict, Any
 from loguru import logger
 
 # 动态注入祖传代码路径
-LEGACY_SERVICES_DIR = r"D:\No Streamlimit\20260325"
+LEGACY_SERVICES_DIR = r"D:\No Streamlit\20260325"
 if LEGACY_SERVICES_DIR not in sys.path:
     sys.path.insert(0, LEGACY_SERVICES_DIR)
 
