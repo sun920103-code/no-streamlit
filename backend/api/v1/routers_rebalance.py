@@ -54,6 +54,108 @@ def _normalize_factor_keys(raw: dict) -> dict:
     return result
 
 
+# ── 8 大资产类别常量 (与 legacy sensitivity matrix 列对齐) ──
+ASSET_CLASSES_8 = ["大盘核心", "科技成长", "红利防守", "纯债固收", "混合债券", "短债理财", "黄金商品", "海外QDII"]
+
+
+def _load_client_meta() -> Optional[pd.DataFrame]:
+    """从 backend/data/ 加载最新的 sync_*_meta.csv (基金元数据)。"""
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+    if not os.path.exists(data_dir):
+        return None
+    metas = [f for f in os.listdir(data_dir) if f.startswith("sync_") and f.endswith("_meta.csv")]
+    if not metas:
+        return None
+    metas.sort(key=lambda f: os.path.getmtime(os.path.join(data_dir, f)), reverse=True)
+    path = os.path.join(data_dir, metas[0])
+    try:
+        df = pd.read_csv(path, index_col=0, encoding="utf-8-sig", dtype=str)
+        df.columns = [c.upper() for c in df.columns]
+        df.index = [str(idx).split(".")[0].zfill(6) for idx in df.index]
+        logger.info(f"[Rebalance] 加载基金元数据: {path} ({len(df)} 只)")
+        return df
+    except Exception as e:
+        logger.error(f"[Rebalance] 元数据加载失败: {e}")
+        return None
+
+
+def _build_class_map(bare_codes: list) -> dict:
+    """
+    构建 {fund_code: asset_class} 映射。
+    使用 meta CSV 中的 SEC_NAME + FUND_INVESTTYPE 关键字启发式匹配,
+    与 legacy portfolio_diagnostics.map_client_funds_to_factors 逻辑一致。
+    """
+    meta_df = _load_client_meta()
+    class_map = {}
+    for code in bare_codes:
+        name = ""
+        inv_type = ""
+        if meta_df is not None and code in meta_df.index:
+            row = meta_df.loc[code]
+            name = str(row.get("SEC_NAME", ""))
+            inv_type = str(row.get("FUND_INVESTTYPE", ""))
+        cmb = f"{name} {inv_type}".lower()
+
+        if 'qdii' in cmb or '海外' in cmb or '全球' in cmb or '标普' in cmb or '纳斯达克' in cmb or '恒生' in cmb or '纳指' in cmb:
+            ac = "海外QDII"
+        elif '黄金' in cmb or '大宗商品' in cmb or '豆粕' in cmb or '能源' in cmb or '商品型' in cmb or '有色' in cmb or '白银' in cmb:
+            ac = "黄金商品"
+        elif '纯债' in cmb or '利率债' in cmb or '国债' in cmb or '政金债' in cmb or '中长期纯债' in cmb:
+            ac = "纯债固收"
+        elif '货币' in cmb or '理财' in cmb or '短债' in cmb:
+            ac = "短债理财"
+        elif '信用' in cmb or '企业债' in cmb or '公司债' in cmb or '可转债' in cmb or '产业债' in cmb or '一级基金' in cmb:
+            ac = "混合债券"
+        elif '偏债' in cmb or '二级债' in cmb or '短期纯债' in cmb:
+            ac = "混合债券"
+        elif '红利' in cmb or '低波' in cmb or '高股息' in cmb:
+            ac = "红利防守"
+        elif '科创' in cmb or '创业板' in cmb or '中证1000' in cmb or '科技' in cmb:
+            ac = "科技成长"
+        elif '股票' in cmb or '偏股' in cmb or '灵活配置' in cmb or '沪深' in cmb or '中证' in cmb or '混合型' in cmb or '指数型' in cmb or '被动' in cmb or '白酒' in cmb or '医药' in cmb or '新能源' in cmb or '军工' in cmb or '银行' in cmb:
+            ac = "大盘核心"
+        elif '偏债混合' in cmb:
+            ac = "混合债券"
+        elif '灵活配置' in cmb or '混合' in cmb:
+            ac = "大盘核心"
+        else:
+            ac = "大盘核心"
+        class_map[code] = ac
+    logger.info(f"[Rebalance] class_map 构建完成: {len(class_map)} 只 → {dict(pd.Series(list(class_map.values())).value_counts())}")
+    return class_map
+
+
+def _asset_views_to_fund_weights(
+    asset_views: dict,
+    bare_codes: list,
+    class_map: dict,
+    amplifier: float = 1.5,
+) -> dict:
+    """
+    将资产类别级得分通过 class_map 广播到基金级权重。
+    逻辑 (与 legacy app.py L136-145 一致):
+      1. asset_views = {asset_class: score}  (score ∈ [-1, 1])
+      2. 每只基金获得其所属 asset_class 的 score
+      3. 将 score 转为年化超额预期 view = score * 0.15
+      4. 等权基线 + view * confidence * amplifier → 目标权重
+      5. 归一化到 sum=1
+    """
+    n = max(len(bare_codes), 1)
+    base_w = 1.0 / n
+    raw = {}
+    for code in bare_codes:
+        ac = class_map.get(code, "大盘核心")
+        score = asset_views.get(ac, 0.0)
+        view = score * 0.15
+        confidence = min(0.90, 0.5 + abs(score) * 0.35)
+        offset = view * confidence * amplifier
+        raw[code] = max(0.001, base_w + offset)
+    total = sum(raw.values())
+    if total > 1e-8:
+        return {k: v / total for k, v in raw.items()}
+    return {c: base_w for c in bare_codes}
+
+
 def _compute_kpi_from_nav(weights: dict, nav_df: pd.DataFrame) -> dict:
     """
     从历史 NAV DataFrame 计算 KPI (年化收益/波动/最大回撤/夏普/卡玛)。
@@ -221,14 +323,11 @@ def _run_pipeline_sync(
 
     from services.bl_view_generator import (
         macro_factor_to_asset_views,
-        factor_scores_to_fund_views,
-        ASSET_CLASSES_7,
         parse_weekly_report_pdf,
     )
 
     # ── 持仓代码标准化 ──
     if not portfolio_codes:
-        # 从 backend/data 自动读取
         holdings = _load_client_holdings()
         if holdings:
             portfolio_codes = list(holdings.keys())
@@ -240,12 +339,30 @@ def _run_pipeline_sync(
     bare_codes = [c.split(".")[0].zfill(6) for c in portfolio_codes]
     log_fn(f"📋 持仓基金: {len(bare_codes)} 只")
 
+    # ── 构建 class_map (fund_code → asset_class) ──
+    class_map = _build_class_map(bare_codes)
+    _cm_summary = {}
+    for c, ac in class_map.items():
+        _cm_summary[ac] = _cm_summary.get(ac, 0) + 1
+    log_fn(f"🗂️ 基金归类: {_cm_summary}")
+
+    # ── 加载基金元数据 (名称) ──
+    meta_df = _load_client_meta()
+    fund_names = {}
+    if meta_df is not None:
+        for code in bare_codes:
+            if code in meta_df.index:
+                fund_names[code] = str(meta_df.loc[code].get("SEC_NAME", code))
+            else:
+                fund_names[code] = code
+    else:
+        fund_names = {c: c for c in bare_codes}
+
     # 加载 NAV
     nav_df = _load_client_nav()
     original_kpi = {}
+    original_weights = {c: 1.0 / len(bare_codes) for c in bare_codes}
     if nav_df is not None:
-        # 原始持仓等权
-        original_weights = {c: 1.0 / len(bare_codes) for c in bare_codes}
         original_kpi = _compute_kpi_from_nav(original_weights, nav_df)
         log_fn(f"📊 原始持仓 KPI 已计算 (Sharpe={original_kpi.get('sharpe', 0):.2f})")
 
@@ -256,7 +373,7 @@ def _run_pipeline_sync(
 
     step1_factors = {}
     step1_quadrant = {}
-    step1_fund_views = {}
+    step1_asset_views = {}
     step1_weights = {}
 
     try:
@@ -265,7 +382,6 @@ def _run_pipeline_sync(
             fetch_risk_momentum_factors, calculate_derived_factors,
             calculate_factor_scores,
         )
-        from services.factor_loadings import determine_quadrant, QUADRANT_DEFINITIONS
 
         log_fn("📡 正在检索 EDB 宏观数据...")
         macro_data = fetch_macro_factors()
@@ -274,18 +390,18 @@ def _run_pipeline_sync(
         derived = calculate_derived_factors(macro_data, val_data)
         scores = calculate_factor_scores(macro_data, val_data, risk_data, derived)
 
+        if scores is None:
+            raise RuntimeError("EDB 因子得分计算返回 None (数据不足)")
+
         log_fn(f"✅ EDB 数据下载完成 (市场状态: {scores.get('market_state', 'N/A')})")
 
-        # 从 EDB 综合得分推导 6 因子得分
-        # EDB composite_score → 6 因子一阶近似
         _composite = scores.get("composite_score", 0.5)
         _macro_t = scores.get("macro_total", 0)
         _val_t = scores.get("valuation_total", 0)
-        _risk_t = scores.get("risk_total", 0)
 
         step1_factors = {
             "经济增长": round(float(_macro_t * 2), 3),
-            "通胀商品": round(float(-_val_t * 1.5), 3),  # 高估值 → 通胀负
+            "通胀商品": round(float(-_val_t * 1.5), 3),
             "利率环境": round(float(_macro_t * 1.2), 3),
             "信用扩张": round(float((_composite - 0.5) * 2), 3),
             "海外环境": 0.0,
@@ -294,28 +410,29 @@ def _run_pipeline_sync(
         step1_factors = _normalize_factor_keys(step1_factors)
 
         # 象限定位
-        current_q = determine_quadrant(step1_factors)
-        q_info = QUADRANT_DEFINITIONS[current_q]
-        step1_quadrant = {
-            "quadrant": current_q,
-            "label": q_info["label"],
-            "description": q_info["description"],
-            "best_assets": q_info.get("best_assets", []),
-            "worst_assets": q_info.get("worst_assets", []),
-        }
-        log_fn(f"🧭 宏观象限: {q_info['label']}")
+        _growth = step1_factors.get("经济增长", 0)
+        _inflation = step1_factors.get("通胀商品", 0)
+        if _growth >= 0 and _inflation >= 0:
+            _q_label, _q_desc = "过热期", "经济扩张+通胀上行，偏向商品/短久期"
+        elif _growth >= 0 and _inflation < 0:
+            _q_label, _q_desc = "复苏期", "经济扩张+通胀温和，利好权益/信用"
+        elif _growth < 0 and _inflation >= 0:
+            _q_label, _q_desc = "滞胀期", "经济收缩+通胀高企，防御为主"
+        else:
+            _q_label, _q_desc = "衰退期", "经济收缩+通胀回落，利好债券/防御"
+        step1_quadrant = {"quadrant": _q_label, "label": _q_label, "description": _q_desc}
+        log_fn(f"🧭 宏观象限: {_q_label}")
 
-        # 因子 → 大类资产 → 基金级映射
-        asset_views = macro_factor_to_asset_views(step1_factors)
-        step1_fund_views = factor_scores_to_fund_views(step1_factors, bare_codes)
-
-        # 将基金级 view 转为权重
-        step1_weights = _views_to_weights(step1_fund_views, bare_codes)
+        # 因子 → 资产类别级得分 (矩阵乘法)
+        step1_asset_views = macro_factor_to_asset_views(step1_factors)
+        # 资产类别得分 → 基金级权重
+        step1_weights = _asset_views_to_fund_weights(step1_asset_views, bare_codes, class_map)
 
         log_fn("✅ Step 1 完成: 宏观象限调仓就绪")
     except Exception as e:
         logger.error(f"[Step 1] 异常: {traceback.format_exc()}")
         log_fn(f"⚠️ Step 1 异常 (降级跳过): {str(e)[:100]}")
+        step1_weights = dict(original_weights)
 
     # ═══════════════════════════════════════════
     # Step 2: 新闻资讯 → LLM → 因子调仓
@@ -323,7 +440,7 @@ def _run_pipeline_sync(
     log_fn("📰 Step 2/3: Tavily 搜索 + AI 新闻因子提取...")
 
     step2_factors = {}
-    step2_fund_views = {}
+    step2_asset_views = {}
     step2_weights = {}
     step2_news_digest = ""
 
@@ -338,25 +455,25 @@ def _run_pipeline_sync(
             step2_news_digest = news_result.get("headlines_digest", "")
             log_fn(f"✅ 新闻因子提取完成: {step2_news_digest[:50]}...")
 
-            step2_fund_views = factor_scores_to_fund_views(step2_factors, bare_codes)
-            step2_weights = _views_to_weights(step2_fund_views, bare_codes)
+            step2_asset_views = macro_factor_to_asset_views(step2_factors)
+            step2_weights = _asset_views_to_fund_weights(step2_asset_views, bare_codes, class_map)
 
             log_fn("✅ Step 2 完成: 新闻资讯调仓就绪")
         else:
             log_fn("⚠️ 新闻因子提取无结果, 使用中性观点")
             step2_factors = {f: 0.0 for f in MACRO_FACTORS_6}
-            step2_weights = {c: 1.0 / len(bare_codes) for c in bare_codes}
+            step2_weights = dict(original_weights)
     except Exception as e:
         logger.error(f"[Step 2] 异常: {traceback.format_exc()}")
         log_fn(f"⚠️ Step 2 异常 (降级跳过): {str(e)[:100]}")
         step2_factors = {f: 0.0 for f in MACRO_FACTORS_6}
-        step2_weights = {c: 1.0 / len(bare_codes) for c in bare_codes}
+        step2_weights = dict(original_weights)
 
     # ═══════════════════════════════════════════
     # Step 3: 研报 → MOE 投委会 (可选)
     # ═══════════════════════════════════════════
     step3_factors = {}
-    step3_fund_views = {}
+    step3_asset_views = {}
     step3_weights = {}
     step3_debate_logs = []
     step3_moe_report = ""
@@ -364,11 +481,9 @@ def _run_pipeline_sync(
 
     if has_report:
         log_fn(f"📄 Step 3/3: {len(uploaded_reports)} 份研报 → AI MOE 投委会审议...")
-
         try:
             from services.multi_agent import run_investment_committee
 
-            # 解析 PDF
             report_texts = []
             report_names = []
             for fname, content in uploaded_reports:
@@ -398,42 +513,31 @@ def _run_pipeline_sync(
                 step3_moe_report = md_report
                 step3_debate_logs = debate_logs
 
-                # 从 bl_views 提取因子得分
                 if bl_views:
-                    # bl_views = {资产类别: {view, confidence, sentiment_score}}
-                    # 从 sentiment_score 反推因子得分
                     step3_factors = {f: 0.0 for f in MACRO_FACTORS_6}
-
-                    # 方法1: 从 MOE 全局元数据获取 sensitivity_modifiers
                     try:
                         import services.multi_agent as _ma_mod
                         _moe_meta = getattr(_ma_mod, '_last_moe_metadata', None) or {}
                         _modifiers = _moe_meta.get("sensitivity_modifiers", {})
-                        # sensitivity_modifiers 如果有非 1.0 的值, 说明因子有调整
                         for f in MACRO_FACTORS_6:
                             mod_val = _modifiers.get(f, 1.0)
-                            # 将 modifier (0.5~1.5) 映射到 factor_score (-1~1)
                             step3_factors[f] = round((mod_val - 1.0) * 2.0, 3)
-                    except Exception as e_meta:
-                        logger.warning(f"[Step 3] 元数据读取失败: {e_meta}")
+                    except Exception:
+                        pass
 
-                    # 方法2 (兜底): 从 bl_views 的 sentiment_score 反推
-                    # 识别资产得分并逆向推导因子
-                    _asset_scores = {}
+                    _asset_scores_moe = {}
                     for cls, vdata in bl_views.items():
                         if isinstance(vdata, dict):
-                            _asset_scores[cls] = vdata.get("sentiment_score", vdata.get("view", 0) * 5)
-
-                    # 使用资产得分的加权平均作为综合因子信号
-                    if _asset_scores:
-                        avg_score = sum(_asset_scores.values()) / max(len(_asset_scores), 1)
+                            _asset_scores_moe[cls] = vdata.get("sentiment_score", vdata.get("view", 0) * 5)
+                    if _asset_scores_moe:
+                        avg_score = sum(_asset_scores_moe.values()) / max(len(_asset_scores_moe), 1)
                         for f in MACRO_FACTORS_6:
                             if step3_factors[f] == 0.0:
                                 step3_factors[f] = round(avg_score * 0.3, 3)
 
                     step3_factors = _normalize_factor_keys(step3_factors)
-                    step3_fund_views = factor_scores_to_fund_views(step3_factors, bare_codes)
-                    step3_weights = _views_to_weights(step3_fund_views, bare_codes)
+                    step3_asset_views = macro_factor_to_asset_views(step3_factors)
+                    step3_weights = _asset_views_to_fund_weights(step3_asset_views, bare_codes, class_map)
 
                 log_fn("✅ Step 3 完成: 研报 MOE 调仓就绪")
             else:
@@ -446,10 +550,13 @@ def _run_pipeline_sync(
     else:
         log_fn("ℹ️ 未上传研报, 跳过 Step 3 (MOE 投委会)")
 
+    if not has_report:
+        step3_weights = dict(original_weights)
+
     # ═══════════════════════════════════════════
-    # 并行输出: KPI + 表格 + 雷达 + 面板
+    # 并行输出: KPI + 表格 + 雷达 + 资产观点 + EGARCH + PCA
     # ═══════════════════════════════════════════
-    log_fn("📊 正在计算 KPI 看板 + 调仓表格...")
+    log_fn("📊 正在计算 KPI 看板 + 调仓表格 + 图表数据...")
 
     # KPI 回测
     step1_kpi = _compute_kpi_from_nav(step1_weights, nav_df) if nav_df is not None else {}
@@ -464,45 +571,48 @@ def _run_pipeline_sync(
     if has_report:
         kpi_dashboard.append({"label": "研报调仓", **step3_kpi})
 
-    # 调仓表格 (per-fund deltas)
-    holdings_info = _load_client_holdings() or {}
-    original_weights = {c: 1.0 / max(len(bare_codes), 1) for c in bare_codes}
-
-    def _build_rebalance_table(new_weights, factor_views, step_name):
+    # ── 调仓明细表 (per-fund deltas with reasons) ──
+    def _build_rebalance_table(new_weights, asset_views_dict, step_name):
         table = []
         for code in bare_codes:
-            fund_info = holdings_info.get(code, {})
             old_w = original_weights.get(code, 0)
             new_w = new_weights.get(code, old_w)
             delta_w = new_w - old_w
             delta_amount = delta_w * total_amount
+            ac = class_map.get(code, "大盘核心")
+            score = asset_views_dict.get(ac, 0.0)
 
-            view_data = factor_views.get(code, {})
-            reason = ""
-            view_val = view_data.get("view", 0)
-            if view_val > 0.01:
-                reason = "看多增配"
-            elif view_val < -0.01:
-                reason = "看空减配"
+            # 构建 ≤15 字调仓理由
+            if abs(delta_w) < 0.005:
+                reason = "观点中性，维持原仓"
+            elif score > 0.1:
+                reason = f"{ac}看多，增配"
+            elif score < -0.1:
+                reason = f"{ac}偏空，减配"
+            elif delta_w > 0:
+                reason = f"{ac}温和看多"
             else:
-                reason = "中性持有"
+                reason = f"{ac}温和看空"
 
             table.append({
                 "code": code,
-                "name": fund_info.get("name", code),
+                "name": fund_names.get(code, code),
+                "asset_class": ac,
                 "old_weight": round(old_w * 100, 2),
                 "new_weight": round(new_w * 100, 2),
                 "delta_weight": round(delta_w * 100, 2),
                 "delta_amount": round(delta_amount, 0),
                 "reason": reason,
             })
+        # 按偏离幅度降序
+        table.sort(key=lambda x: -abs(x["delta_weight"]))
         return table
 
-    step1_table = _build_rebalance_table(step1_weights, step1_fund_views, "宏观象限")
-    step2_table = _build_rebalance_table(step2_weights, step2_fund_views, "新闻资讯")
-    step3_table = _build_rebalance_table(step3_weights, step3_fund_views, "研报") if has_report else []
+    step1_table = _build_rebalance_table(step1_weights, step1_asset_views, "宏观象限")
+    step2_table = _build_rebalance_table(step2_weights, step2_asset_views, "新闻资讯")
+    step3_table = _build_rebalance_table(step3_weights, step3_asset_views, "研报") if has_report else []
 
-    # 雷达图 + BL 得分数据
+    # ── 雷达图数据 ──
     def _build_radar_data(factors):
         return {
             "indicators": [{"name": f, "max": 1.0, "min": -1.0} for f in MACRO_FACTORS_6],
@@ -516,20 +626,139 @@ def _run_pipeline_sync(
     if has_report:
         radar_data["report"] = _build_radar_data(step3_factors)
 
-    # BL 资产得分表
-    def _build_bl_scores(factors):
-        asset_views = macro_factor_to_asset_views(factors)
-        return [
-            {"asset": k, "score": round(v, 4), "direction": "正向" if v > 0 else ("负向" if v < 0 else "中性")}
-            for k, v in asset_views.items()
-        ]
+    # ── 大类资产观点 (超配/维持/低配) ──
+    def _build_asset_view_table(asset_views_dict):
+        items = []
+        for ac in ASSET_CLASSES_8:
+            score = asset_views_dict.get(ac, 0.0)
+            if score > 0.1:
+                direction = "超配"
+                color = "red"
+            elif score < -0.1:
+                direction = "低配"
+                color = "blue"
+            else:
+                direction = "维持"
+                color = "gray"
+            items.append({"asset": ac, "score": round(score, 4), "direction": direction, "color": color})
+        return items
 
-    bl_scores = {
-        "macro": _build_bl_scores(step1_factors),
-        "news": _build_bl_scores(step2_factors),
+    asset_views_data = {
+        "macro": _build_asset_view_table(step1_asset_views),
+        "news": _build_asset_view_table(step2_asset_views),
     }
     if has_report:
-        bl_scores["report"] = _build_bl_scores(step3_factors)
+        asset_views_data["report"] = _build_asset_view_table(step3_asset_views)
+
+    # ── EGARCH 条件波动率计算 ──
+    egarch_data = {}
+    if nav_df is not None and len(nav_df) > 30:
+        try:
+            log_fn("📈 正在计算 EGARCH 条件波动率...")
+            all_weight_sets = [
+                ("baseline", "持仓底仓", original_weights),
+                ("macro", "宏观调仓", step1_weights),
+                ("news", "资讯调仓", step2_weights),
+            ]
+            if has_report:
+                all_weight_sets.append(("report", "研报调仓", step3_weights))
+
+            for key, label, w_dict in all_weight_sets:
+                try:
+                    common = [c for c in w_dict if c in nav_df.columns]
+                    if not common or len(nav_df) < 30:
+                        continue
+                    w_arr = np.array([w_dict.get(c, 0) for c in common])
+                    w_sum = w_arr.sum()
+                    if w_sum > 0:
+                        w_arr = w_arr / w_sum
+                    rets = nav_df[common].pct_change().dropna()
+                    port_ret = (rets * w_arr).sum(axis=1)
+
+                    # EGARCH 拟合
+                    from arch import arch_model
+                    scaled = port_ret * 100
+                    if scaled.var() < 1e-8:
+                        egarch_data[key] = {"label": label, "bypassed": True, "reason": "波动率不足"}
+                        continue
+
+                    model = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, q=1, dist='skewt', rescale=False)
+                    res = model.fit(disp='off')
+                    cond_vol = res.conditional_volatility / 100
+                    gamma_keys = [k for k in res.params.index if 'gamma' in k.lower()]
+                    gamma_val = float(res.params[gamma_keys[0]]) if gamma_keys else 0.0
+
+                    egarch_data[key] = {
+                        "label": label,
+                        "bypassed": False,
+                        "dates": [d.strftime("%Y-%m-%d") for d in cond_vol.index],
+                        "values": [round(float(v), 6) for v in cond_vol.values],
+                        "mean_vol": round(float(cond_vol.mean()), 6),
+                        "gamma": round(gamma_val, 4),
+                        "asymmetry": "负面冲击放大" if gamma_val < -0.03 else "冲击基本对称",
+                    }
+                except Exception as e_eg:
+                    egarch_data[key] = {"label": label, "bypassed": True, "reason": str(e_eg)[:60]}
+            log_fn(f"✅ EGARCH 计算完成 ({len(egarch_data)} 个配置)")
+        except Exception as e_all:
+            log_fn(f"⚠️ EGARCH 计算异常: {str(e_all)[:60]}")
+
+    # ── PCA 风险温度计 ──
+    pca_data = {}
+    if nav_df is not None and len(nav_df) > 30:
+        try:
+            log_fn("🌡️ 正在计算 PCA 风险温度计...")
+            from sklearn.decomposition import PCA
+            rets = nav_df.pct_change().dropna()
+
+            all_weight_sets_pca = [
+                ("baseline", "持仓底仓", original_weights),
+                ("macro", "宏观调仓", step1_weights),
+                ("news", "资讯调仓", step2_weights),
+            ]
+            if has_report:
+                all_weight_sets_pca.append(("report", "研报调仓", step3_weights))
+
+            for key, label, w_dict in all_weight_sets_pca:
+                try:
+                    common = [c for c in w_dict if c in rets.columns]
+                    if len(common) < 2:
+                        continue
+                    X = rets[common].values
+                    # 加权标准化
+                    w_arr = np.array([w_dict.get(c, 1.0 / len(common)) for c in common])
+                    w_arr = w_arr / w_arr.sum()
+                    X_weighted = X * np.sqrt(w_arr)
+                    # 去除零方差列
+                    valid_mask = X_weighted.std(axis=0) > 1e-10
+                    X_clean = X_weighted[:, valid_mask]
+                    if X_clean.shape[1] < 2:
+                        continue
+                    pca = PCA(n_components=1)
+                    pca.fit(X_clean)
+                    pc1_ratio = float(pca.explained_variance_ratio_[0]) * 100
+
+                    if pc1_ratio < 40:
+                        level, color, text = "green", "#10B981", "分散良好"
+                    elif pc1_ratio < 60:
+                        level, color, text = "yellow", "#F59E0B", "中度集中"
+                    else:
+                        level, color, text = "red", "#EF4444", "高度同质化"
+
+                    pca_data[key] = {
+                        "label": label,
+                        "pc1_ratio": round(pc1_ratio, 1),
+                        "level": level,
+                        "color": color,
+                        "text": text,
+                        "loadings": [round(float(v), 4) for v in pca.components_[0][:min(len(common), 10)]],
+                        "fund_names": [fund_names.get(c, c) for c in common[:10]],
+                    }
+                except Exception as e_pca:
+                    logger.warning(f"[PCA] {key} 异常: {e_pca}")
+            log_fn(f"✅ PCA 计算完成 ({len(pca_data)} 个配置)")
+        except Exception as e_all:
+            log_fn(f"⚠️ PCA 计算异常: {str(e_all)[:60]}")
 
     log_fn("✅ 全部调仓计算完成!")
 
@@ -541,7 +770,9 @@ def _run_pipeline_sync(
             "report": step3_table,
         },
         "radar": radar_data,
-        "bl_scores": bl_scores,
+        "asset_views": asset_views_data,
+        "egarch": egarch_data,
+        "pca": pca_data,
         "quadrant": step1_quadrant,
         "news_digest": step2_news_digest,
         "has_report": has_report,
@@ -552,28 +783,6 @@ def _run_pipeline_sync(
             "news": step2_factors,
             "report": step3_factors if has_report else {},
         },
+        "class_map": class_map,
     }
 
-
-def _views_to_weights(fund_views: dict, codes: list) -> dict:
-    """
-    将 BL fund views (view, confidence) 转为目标权重。
-    逻辑: 等权基线 + view 偏移, 然后归一化到 [0, 1]。
-    """
-    n = max(len(codes), 1)
-    base_w = 1.0 / n
-    raw = {}
-    for code in codes:
-        fv = fund_views.get(code, {})
-        view = fv.get("view", 0.0)
-        conf = fv.get("confidence", 0.5)
-        # view ∈ [-0.1, 0.1] 大致, confidence ∈ [0, 1]
-        # 偏移量 = view * confidence * 调节系数
-        offset = view * conf * 5.0  # 放大到权重级别
-        raw[code] = max(0.0, base_w + offset)
-
-    # 归一化
-    total = sum(raw.values())
-    if total > 1e-8:
-        return {k: v / total for k, v in raw.items()}
-    return {c: base_w for c in codes}

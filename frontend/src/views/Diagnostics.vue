@@ -165,10 +165,39 @@
               </span>
               <button class="btn btn-outline" style="padding:4px 12px;font-size:12px;" @click="clearHoldings">🗑️ 清除</button>
             </div>
-            <!-- Wind Sync Loading Banner -->
-            <div v-if="windSyncing" style="padding:12px 16px;background:#EBF5FB;border:1px solid #2E86C1;border-radius:8px;margin-bottom:12px;font-size:13px;color:#1A5276;display:flex;align-items:center;gap:8px;">
-              <span style="animation:spin 1s linear infinite;display:inline-block;">⏳</span>
-              {{ windSyncMessage }}
+            <!-- Wind Sync Loading Banner — Glass Horizontal Bar -->
+            <div v-if="windSyncing" style="position:relative;margin-bottom:16px;">
+              <!-- Ambient glow -->
+              <div style="position:absolute;inset:-4px;background:rgba(0,21,41,0.04);border-radius:9999px;filter:blur(16px);opacity:0.5;pointer-events:none;"></div>
+              <!-- Main bar -->
+              <div style="position:relative;background:rgba(255,255,255,0.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:9999px;border:1px solid rgba(255,255,255,0.4);box-shadow:0 4px 20px rgba(0,21,41,0.06);overflow:hidden;padding:10px 24px;display:flex;align-items:center;gap:20px;">
+                <!-- Left: Spinning Sync Icon -->
+                <div style="flex-shrink:0;display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:50%;background:rgba(0,21,41,0.05);">
+                  <span class="material-symbols-outlined wind-sync-spin" style="font-size:20px;color:#001529;">sync</span>
+                </div>
+                <!-- Center: Message + Slim Progress Bar -->
+                <div style="flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;">
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-family:'Manrope',sans-serif;font-weight:700;font-size:13px;color:#001529;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                      {{ windSyncMessage || '正在连接 Wind 终端并拉取底层数据...' }}
+                    </span>
+                  </div>
+                  <!-- Slim animated progress bar -->
+                  <div style="margin-top:8px;width:100%;max-width:360px;height:3px;background:rgba(0,21,41,0.08);border-radius:9999px;overflow:hidden;">
+                    <div class="wind-progress-bar" style="height:100%;width:33%;background:#001529;border-radius:9999px;opacity:0.75;"></div>
+                  </div>
+                </div>
+                <!-- Right: Status Metadata -->
+                <div style="flex-shrink:0;display:flex;align-items:center;gap:20px;padding-left:20px;border-left:1px solid rgba(0,21,41,0.08);">
+                  <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                      <span style="width:5px;height:5px;background:#10B981;border-radius:50%;animation:pulse 2s ease-in-out infinite;"></span>
+                      <span style="font-size:9px;font-family:'JetBrains Mono',monospace;color:rgba(0,21,41,0.5);letter-spacing:0.08em;text-transform:uppercase;">SYSTEM STATUS: ACTIVE</span>
+                    </div>
+                    <span style="font-size:10px;font-family:'JetBrains Mono',monospace;font-weight:700;color:rgba(0,21,41,0.7);letter-spacing:-0.02em;">NODE_0x7F4B</span>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="portfolio-table-container">
               <table class="nf-table">
@@ -308,24 +337,44 @@
               </div>
             </div>
 
-            <!-- All Clear -->
+            <!-- All Clear — Tertiary Fixed Banner -->
             <div v-else-if="alertsData && alertsData.total_alerts === 0 && !windSyncing"
-                 style="margin-top:16px;padding:12px 16px;background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;font-size:13px;color:#166534;">
-              ✅ 底层资产健康，未发现近期经理变更、风格漂移或重仓股暴跌。您的持仓目前风控绿灯。
+                 style="margin-top:20px;background:rgba(172,244,164,0.4);border-radius:12px;padding:20px 28px;display:flex;align-items:flex-start;gap:20px;border:1px solid rgba(12,82,22,0.05);">
+              <div style="flex-shrink:0;margin-top:2px;">
+                <span class="material-symbols-outlined" style="font-size:28px;color:#0c5216;font-variation-settings:'FILL' 1,'wght' 400,'GRAD' 0,'opsz' 24;">check_circle</span>
+              </div>
+              <div style="flex:1;">
+                <p style="font-family:'Manrope',sans-serif;font-weight:600;color:#0c5216;line-height:1.6;font-size:17px;margin:0;">
+                  底层资产健康，未发现近期经理变更、风格漂移或重仓股暴跌。您的持仓目前风控绿灯。
+                </p>
+              </div>
             </div>
           </div>
 
-          <!-- ═══ 投资组合表现月度回顾 ═══ -->
-          <div v-if="holdings.length > 0 && !windSyncing" class="card fade-in" style="margin-bottom:24px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-              <div class="card-title" style="margin-bottom:0;">📋 投资组合表现月度回顾</div>
-              <span v-if="monthlyReviewLoading" style="font-size:12px;color:#64748B;">⏳ Kimi 正在联网搜索持仓基金新闻，正在生成回顾报告...</span>
-            </div>
-            <div v-if="monthlyReview" style="white-space:pre-wrap;font-size:14px;line-height:1.8;color:#334155;">
-              {{ monthlyReview }}
-            </div>
-            <div v-if="!monthlyReview && !monthlyReviewLoading" style="text-align:center;color:#94A3B8;font-size:13px;padding:20px 0;">
-              等待 Wind 数据同步完成后自动生成...
+          <!-- ═══ 投资组合表现月度回顾 — Elevated Card ═══ -->
+          <div v-if="holdings.length > 0 && !windSyncing" class="fade-in" style="margin-bottom:24px;">
+            <div style="background:#ffffff;border-radius:12px;padding:36px 40px;box-shadow:0 8px 32px rgba(25,28,29,0.06);border:1px solid rgba(196,198,205,0.1);">
+              <!-- Header -->
+              <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;">
+                <div style="width:48px;height:48px;border-radius:12px;background:#f3f4f5;display:flex;align-items:center;justify-content:center;">
+                  <span class="material-symbols-outlined" style="font-size:24px;color:#43474d;">description</span>
+                </div>
+                <h2 style="font-family:'Manrope',sans-serif;font-weight:700;color:#191c1d;letter-spacing:-0.3px;font-size:22px;margin:0;">
+                  投资组合表现月度回顾 ({{ new Date().getFullYear() }}年{{ String(new Date().getMonth()+1).padStart(2,'0') }}月{{ String(new Date().getDate()).padStart(2,'0') }}日)
+                </h2>
+                <span v-if="monthlyReviewLoading" style="margin-left:auto;font-size:12px;color:#64748B;white-space:nowrap;">⏳ Kimi 正在联网搜索持仓基金新闻，正在生成回顾报告...</span>
+              </div>
+              <!-- Divider -->
+              <div style="height:1px;background:rgba(196,198,205,0.1);width:100%;"></div>
+              <!-- Content -->
+              <div style="padding:20px 0;">
+                <div v-if="monthlyReview" style="white-space:pre-wrap;font-family:'Inter',sans-serif;font-size:16px;line-height:2;color:#43474d;">
+                  {{ monthlyReview }}
+                </div>
+                <p v-if="!monthlyReview && !monthlyReviewLoading" style="font-family:'Inter',sans-serif;font-size:16px;line-height:2;color:#43474d;margin:0;">
+                  等待 Wind 数据同步完成后自动生成...
+                </p>
+              </div>
             </div>
           </div>
 
@@ -334,112 +383,288 @@
 
         <!-- Page 2: AI 研判调仓 -->
         <div v-if="activePage === 1" class="fade-in">
-          <div class="section-title">🧠 一键策略调仓</div>
 
-          <!-- ── 操作栏: 上传研报 + 一键调仓 ── -->
-          <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #E2E8F0;padding-bottom:20px;margin-bottom:24px;gap:16px;flex-wrap:wrap;">
-             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-               <label style="padding:10px 20px;background:white;border:2px dashed #CBD5E1;border-radius:8px;color:#475569;cursor:pointer;font-size:14px;font-weight:500;transition:all 0.2s;">
-                 📄 上传研报 (可选)
-                 <input type="file" accept=".pdf,.txt,.docx" multiple @change="onRebalReportSelect" style="display:none;" />
-               </label>
-               <span v-for="(f, i) in rebalReports" :key="i" style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;padding:4px 10px;border-radius:16px;font-size:12px;display:flex;align-items:center;gap:6px;">
-                 📎 {{ f.name }}
-                 <span style="cursor:pointer;font-weight:bold;color:#EF4444;" @click="rebalReports.splice(i,1)">×</span>
-               </span>
-             </div>
-             <button @click="runRebalPipeline" :disabled="rebalRunning || holdings.length === 0"
-               style="padding:12px 32px;background:linear-gradient(135deg,#3B82F6,#2563EB);color:white;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;box-shadow:0 4px 14px rgba(59,130,246,0.3);transition:all 0.2s;"
-               :style="rebalRunning || holdings.length === 0 ? {opacity:0.6,cursor:'not-allowed'} : {}"
-             >
-               {{ rebalRunning ? '⏳ 管线运行中...' : '🚀 一键配置调仓' }}
-             </button>
-          </div>
-          <div v-if="holdings.length === 0" style="padding:20px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;color:#92400E;font-size:13px;margin-bottom:16px;">
-            ⚠️ 请先在「持仓分析」页面上传持仓 CSV 文件
-          </div>
+          <!-- ═══ Rebalancing Action Bar — Institutional Grade ═══ -->
+          <div style="margin-bottom:28px;">
+            <!-- Main Card -->
+            <div style="background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.06);overflow:hidden;border:1px solid rgba(196,198,205,0.1);padding:20px 24px;display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap;">
 
-          <!-- ── SSE 进度日志 ── -->
-          <div v-if="rebalLogs.length > 0 || rebalRunning" style="background:white;border-radius:12px;border:1px solid #E2E8F0;padding:16px 20px;margin-bottom:24px;">
-            <div class="card-title">📡 运行日志</div>
-            <div ref="rebalLogRef" style="max-height:200px;overflow-y:auto;font-family:'JetBrains Mono',monospace;font-size:12px;color:#334155;background:#F8FAFC;border-radius:8px;padding:12px;">
-              <div v-for="(log, idx) in rebalLogs" :key="idx" style="margin-bottom:4px;line-height:1.6;">{{ log }}</div>
-              <div v-if="rebalRunning" style="color:#94A3B8;">处理中<span style="animation:blink 1.4s infinite both;">.</span><span style="animation:blink 1.4s infinite both 0.2s;">.</span><span style="animation:blink 1.4s infinite both 0.4s;">.</span></div>
+              <!-- Left: Branding -->
+              <div style="flex-shrink:0;display:flex;align-items:center;gap:12px;">
+                <div style="width:40px;height:40px;border-radius:8px;background:rgba(0,21,41,0.05);display:flex;align-items:center;justify-content:center;">
+                  <span class="material-symbols-outlined" style="font-size:24px;color:#001529;">corporate_fare</span>
+                </div>
+                <div style="display:flex;flex-direction:column;">
+                  <span style="font-size:14px;font-weight:700;color:#001529;font-family:'Manrope',sans-serif;letter-spacing:-0.3px;">财富管理服务信托总部家族办公室</span>
+                </div>
+              </div>
+
+              <!-- Center: File Upload Area -->
+              <div style="flex:1;max-width:560px;min-width:240px;">
+                <label style="position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:56px;padding:0 24px;background:#f8f9fa;border:2px dashed rgba(196,198,205,0.3);border-radius:12px;cursor:pointer;transition:all 0.2s;"
+                  @mouseenter="$event.currentTarget.style.background='#f1f5f9';$event.currentTarget.style.borderColor='rgba(0,21,41,0.25)'"
+                  @mouseleave="$event.currentTarget.style.background='#f8f9fa';$event.currentTarget.style.borderColor='rgba(196,198,205,0.3)'">
+                  <input type="file" accept=".pdf,.txt,.docx" multiple @change="onRebalReportSelect" style="display:none;" />
+                  <div style="display:flex;align-items:center;gap:10px;">
+                    <span class="material-symbols-outlined" style="font-size:20px;color:#43474d;transition:color 0.2s;">upload_file</span>
+                    <span style="font-size:14px;font-weight:500;color:#43474d;">上传研报 (可选)</span>
+                    <span style="font-size:10px;color:#94A3B8;padding:2px 8px;background:#f1f5f9;border-radius:9999px;border:1px solid rgba(196,198,205,0.2);">Upload Research Report (Optional)</span>
+                  </div>
+                </label>
+                <!-- Uploaded file pills -->
+                <div v-if="rebalReports.length > 0" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;">
+                  <span v-for="(f, i) in rebalReports" :key="i" style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;padding:4px 10px;border-radius:16px;font-size:12px;display:flex;align-items:center;gap:6px;">
+                    📎 {{ f.name }}
+                    <span style="cursor:pointer;font-weight:bold;color:#EF4444;" @click="rebalReports.splice(i,1)">×</span>
+                  </span>
+                </div>
+              </div>
+
+              <!-- Right: Primary Action Button -->
+              <div style="flex-shrink:0;">
+                <button @click="runRebalPipeline" :disabled="rebalRunning || holdings.length === 0"
+                  style="display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 32px;background:#001529;color:#ffffff;border:none;border-radius:12px;font-family:'Manrope',sans-serif;font-weight:700;font-size:15px;cursor:pointer;transition:all 0.15s;box-shadow:0 4px 14px rgba(0,21,41,0.2);"
+                  :style="rebalRunning || holdings.length === 0 ? {opacity:0.5,cursor:'not-allowed'} : {}"
+                  @mouseenter="!rebalRunning && holdings.length > 0 && ($event.currentTarget.style.opacity='0.9')"
+                  @mouseleave="!rebalRunning && holdings.length > 0 && ($event.currentTarget.style.opacity='1')">
+                  <span class="material-symbols-outlined" style="font-size:22px;">trending_up</span>
+                  <span>{{ rebalRunning ? '管线运行中...' : '一键策略调仓' }}</span>
+                  <span class="material-symbols-outlined" style="font-size:18px;transition:transform 0.2s;">chevron_right</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Subtext / Visual Depth -->
+            <div style="margin-top:12px;padding:0 24px;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:rgba(67,71,77,0.5);font-weight:500;letter-spacing:0.08em;text-transform:uppercase;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="width:4px;height:4px;background:rgba(0,21,41,0.35);border-radius:50%;"></span>
+                <span>AI-Driven Portfolio Optimization</span>
+              </div>
+              <div style="display:flex;align-items:center;gap:16px;">
+                <span>Real-time Market Sync</span>
+                <span style="opacity:0.3;">|</span>
+                <span>Institutional Grade Security</span>
+              </div>
             </div>
           </div>
 
-          <!-- ── KPI 看板 ── -->
-          <div v-if="rebalResult" style="margin-bottom:28px;">
-            <div class="card-title">📊 KPI 业绩对比看板</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;">
-              <div v-for="kpi in rebalResult.kpi_dashboard" :key="kpi.label" style="background:white;border-radius:12px;border:1px solid #E2E8F0;padding:16px;transition:transform 0.2s,box-shadow 0.2s;">
-                <div style="font-size:14px;font-weight:600;color:#1E293B;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #3B82F6;">{{ kpi.label }}</div>
-                <div style="display:flex;flex-direction:column;gap:6px;">
-                  <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#94A3B8;">年化收益</span><span style="font-weight:600;font-family:monospace;" :style="{color:(kpi.ann_return||0)>0?'#EF4444':'#10B981'}">{{ ((kpi.ann_return||0)*100).toFixed(2) }}%</span></div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#94A3B8;">年化波动</span><span style="font-weight:600;font-family:monospace;">{{ ((kpi.ann_vol||0)*100).toFixed(2) }}%</span></div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#94A3B8;">最大回撤</span><span style="font-weight:600;font-family:monospace;color:#10B981;">{{ ((kpi.max_dd||0)*100).toFixed(2) }}%</span></div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#94A3B8;">夏普比率</span><span style="font-weight:600;font-family:monospace;">{{ (kpi.sharpe||0).toFixed(2) }}</span></div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;"><span style="color:#94A3B8;">卡玛比率</span><span style="font-weight:600;font-family:monospace;">{{ (kpi.calmar||0).toFixed(2) }}</span></div>
+          <!-- Warning: No holdings -->
+          <div v-if="holdings.length === 0" style="padding:16px 20px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:10px;color:#92400E;font-size:13px;margin-bottom:20px;display:flex;align-items:center;gap:8px;">
+            <span class="material-symbols-outlined" style="font-size:18px;color:#F59E0B;">warning</span>
+            请先在「持仓分析」页面上传持仓 CSV 文件
+          </div>
+
+
+          <!-- ── Operation Log — Structured ── -->
+          <div v-if="rebalLogs.length > 0 || rebalRunning" style="margin-bottom:32px;">
+            <!-- Section Header -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+              <h2 style="font-family:'Manrope',sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.3px;color:#191c1d;display:flex;align-items:center;gap:12px;margin:0;">
+                <span style="width:6px;height:28px;background:#071d31;border-radius:9999px;flex-shrink:0;"></span>
+                运行日志 <span style="color:#43474d;font-weight:400;font-size:17px;margin-left:8px;">Operation Log</span>
+              </h2>
+              <span style="font-size:10px;font-family:'Inter',sans-serif;color:#43474d;background:#e7e8e9;padding:4px 10px;border-radius:4px;letter-spacing:0.04em;">SYSTEM_STATUS: ACTIVE</span>
+            </div>
+            <!-- Log Container -->
+            <div ref="rebalLogRef" style="background:#f3f4f5;border-radius:12px;padding:20px 24px;border:1px solid rgba(196,198,205,0.1);max-height:320px;overflow-y:auto;">
+              <div v-for="(log, idx) in rebalLogs" :key="idx" style="display:flex;align-items:center;gap:14px;padding:8px 0;" :style="idx < rebalLogs.length - 1 ? {borderBottom:'1px solid rgba(196,198,205,0.08)'} : {}">
+                <!-- Smart Icon based on log content -->
+                <span class="material-symbols-outlined" style="flex-shrink:0;font-size:20px;"
+                  :style="{
+                    color: log.includes('完成') || log.includes('✅') ? '#0c5216' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? '#72869e' : log.includes('全部') ? '#0c5216' : '#72869e',
+                    fontVariationSettings: log.includes('完成') || log.includes('✅') ? \"'FILL' 1\" : log.includes('全部') ? \"'FILL' 1\" : \"'FILL' 0\"
+                  }">
+                  {{ log.includes('全部') ? 'verified' : log.includes('完成') || log.includes('✅') ? 'check_circle' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? 'info' : log.includes('EGARCH') ? 'query_stats' : log.includes('PCA') ? 'analytics' : log.includes('计算') ? 'calculate' : 'radio_button_checked' }}
+                </span>
+                <p style="font-size:14px;margin:0;line-height:1.5;" :style="{fontWeight: log.includes('全部') ? '700' : '500', color: log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? '#43474d' : '#191c1d'}">{{ log }}</p>
+              </div>
+              <div v-if="rebalRunning" style="display:flex;align-items:center;gap:14px;padding:8px 0;color:#43474d;">
+                <span class="material-symbols-outlined" style="font-size:20px;color:#72869e;animation:pulse 2s ease-in-out infinite;">pending</span>
+                <span style="font-size:14px;">处理中<span style="animation:blink 1.4s infinite both;">.</span><span style="animation:blink 1.4s infinite both 0.2s;">.</span><span style="animation:blink 1.4s infinite both 0.4s;">.</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── KPI Performance Comparison — Dark Gradient Cards ── -->
+          <div v-if="rebalResult" style="margin-bottom:36px;">
+            <!-- Section Header -->
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">
+              <span style="width:6px;height:28px;background:#0c5216;border-radius:9999px;flex-shrink:0;"></span>
+              <h2 style="font-family:'Manrope',sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.3px;color:#191c1d;margin:0;">
+                KPI 业绩对比看板 <span style="color:#43474d;font-weight:400;font-size:17px;margin-left:8px;">KPI Performance Comparison</span>
+              </h2>
+            </div>
+            <!-- Cards Grid -->
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;">
+              <div v-for="(kpi, kIdx) in rebalResult.kpi_dashboard" :key="kpi.label"
+                style="padding:32px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);display:flex;flex-direction:column;justify-content:space-between;position:relative;overflow:hidden;color:#ffffff;"
+                :style="{
+                  background: kIdx === 0 ? 'linear-gradient(135deg,#004d99,#003366)' : kIdx === 1 ? 'linear-gradient(135deg,#003366,#001f3f)' : 'linear-gradient(135deg,#001f3f,#001529)',
+                  boxShadow: kIdx === (rebalResult.kpi_dashboard.length - 1) ? '0 10px 30px rgba(0,21,41,0.25)' : '0 2px 8px rgba(0,21,41,0.1)'
+                }">
+                <!-- Optimized badge for last card -->
+                <div v-if="kIdx === rebalResult.kpi_dashboard.length - 1" style="position:absolute;top:12px;right:12px;background:rgba(7,29,49,0.3);color:#a7ffeb;font-size:10px;font-weight:700;padding:3px 10px;border-radius:9999px;text-transform:uppercase;letter-spacing:-0.02em;">Optimized</div>
+                <!-- Decorative bg icon for middle card -->
+                <span v-if="kIdx === 1" class="material-symbols-outlined" style="position:absolute;top:8px;right:8px;font-size:80px;color:rgba(255,255,255,0.04);transform:rotate(12deg);pointer-events:none;">account_balance</span>
+
+                <!-- Top Label -->
+                <div>
+                  <div style="font-size:10px;font-family:'Inter',sans-serif;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:4px;opacity:0.6;">
+                    {{ kIdx === 0 ? 'Baseline' : 'Strategy ' + String.fromCharCode(65 + kIdx - 1) }}
+                  </div>
+                  <h3 style="font-family:'Manrope',sans-serif;font-size:20px;font-weight:700;margin:0 0 28px 0;">
+                    {{ kpi.label }}
+                  </h3>
+
+                  <!-- Metrics -->
+                  <div style="display:flex;flex-direction:column;gap:20px;">
+                    <!-- Annual Return -->
+                    <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+                      <span style="font-size:13px;font-weight:500;opacity:0.6;line-height:1.5;">年化收益率<br/>Annualized Return</span>
+                      <span style="font-family:'Manrope',sans-serif;font-size:28px;font-weight:800;color:#ff8a80;letter-spacing:-0.04em;">{{ ((kpi.ann_return||0)*100).toFixed(2) }}%</span>
+                    </div>
+                    <!-- Annual Volatility -->
+                    <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+                      <span style="font-size:13px;font-weight:500;opacity:0.6;line-height:1.5;">年化波动率<br/>Annualized Volatility</span>
+                      <span style="font-family:'Inter',sans-serif;font-size:20px;font-weight:600;opacity:0.9;">{{ ((kpi.ann_vol||0)*100).toFixed(2) }}%</span>
+                    </div>
+                    <!-- Max Drawdown -->
+                    <div style="display:flex;justify-content:space-between;align-items:flex-end;">
+                      <span style="font-size:13px;font-weight:500;opacity:0.6;line-height:1.5;">最大回撤<br/>Max Drawdown</span>
+                      <span style="font-family:'Inter',sans-serif;font-size:20px;font-weight:600;color:#a7ffeb;">{{ ((kpi.max_dd||0)*100).toFixed(2) }}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Footer: Sharpe & Calmar -->
+                <div style="margin-top:36px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.1);display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                  <div>
+                    <span style="font-size:10px;text-transform:uppercase;font-weight:700;opacity:0.5;display:block;margin-bottom:4px;">Sharpe</span>
+                    <span style="font-family:'Manrope',sans-serif;font-size:24px;font-weight:700;"
+                      :style="{color: kIdx === rebalResult.kpi_dashboard.length - 1 ? '#a7ffeb' : '#ffffff'}">
+                      {{ (kpi.sharpe||0).toFixed(2) }}
+                    </span>
+                  </div>
+                  <div>
+                    <span style="font-size:10px;text-transform:uppercase;font-weight:700;opacity:0.5;display:block;margin-bottom:4px;">Calmar</span>
+                    <span style="font-family:'Manrope',sans-serif;font-size:24px;font-weight:700;"
+                      :style="{color: kIdx === rebalResult.kpi_dashboard.length - 1 ? '#a7ffeb' : '#ffffff'}">
+                      {{ (kpi.calmar||0).toFixed(2) }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- ── 宏观象限 ── -->
-          <div v-if="rebalResult && rebalResult.quadrant && rebalResult.quadrant.label" class="card" style="margin-bottom:24px;max-width:600px;">
-            <div class="card-title">🧭 宏观象限定位</div>
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
-              <div style="width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;background:#ECFDF5;">🧭</div>
-              <div>
-                <div style="font-weight:700;font-size:15px;">{{ rebalResult.quadrant.label }}</div>
-                <div style="color:#64748B;font-size:12px;">{{ rebalResult.quadrant.description }}</div>
-              </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-              <div style="padding:8px 12px;border-radius:8px;background:#F0FDF4;border-left:3px solid #10B981;">
-                <div style="color:#94A3B8;font-size:10px;margin-bottom:2px;">利好</div>
-                <div style="font-weight:600;color:#10B981;font-size:12px;">{{ (rebalResult.quadrant.best_assets||[]).join(', ') }}</div>
-              </div>
-              <div style="padding:8px 12px;border-radius:8px;background:#FEF2F2;border-left:3px solid #EF4444;">
-                <div style="color:#94A3B8;font-size:10px;margin-bottom:2px;">承压</div>
-                <div style="font-weight:600;color:#EF4444;font-size:12px;">{{ (rebalResult.quadrant.worst_assets||[]).join(', ') }}</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── 调仓明细表格 ── -->
+          <!-- ── 调仓明细表格 (含资产类别/权重/金额/理由) ── -->
           <div v-if="rebalResult && rebalResult.tables" style="margin-bottom:28px;">
             <div class="card-title">📋 调仓明细</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(500px,1fr));gap:16px;">
               <template v-for="(label, key) in rebalTableKeys" :key="key">
-                <div class="card" v-if="rebalResult.tables[key] && rebalResult.tables[key].length > 0" style="padding:16px;">
+                <div class="card" v-if="rebalResult.tables[key] && rebalResult.tables[key].length > 0" style="padding:16px;overflow-x:auto;">
                   <div style="font-weight:600;font-size:14px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #E2E8F0;">{{ label }}</div>
-                  <table style="width:100%;border-collapse:collapse;">
+                  <table style="width:100%;border-collapse:collapse;min-width:480px;">
                     <thead>
                       <tr>
-                        <th style="text-align:left;font-size:12px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">基金</th>
-                        <th style="text-align:right;font-size:12px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">原权重</th>
-                        <th style="text-align:right;font-size:12px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">新权重</th>
-                        <th style="text-align:right;font-size:12px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">调仓金额</th>
-                        <th style="text-align:left;font-size:12px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">原因</th>
+                        <th style="text-align:left;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">基金</th>
+                        <th style="text-align:center;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">类别</th>
+                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">原%</th>
+                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">新%</th>
+                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">偏离</th>
+                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">金额(万)</th>
+                        <th style="text-align:left;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">理由</th>
                       </tr>
                     </thead>
                     <tbody>
-                      <tr v-for="row in rebalResult.tables[key]" :key="row.code">
-                        <td style="font-size:12px;padding:8px;border-bottom:1px solid #F1F5F9;">
+                      <tr v-for="row in rebalResult.tables[key]" :key="row.code" style="transition:background 0.15s;" @mouseenter="$event.currentTarget.style.background='#F8FAFC'" @mouseleave="$event.currentTarget.style.background=''">
+                        <td style="font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
                           <strong>{{ row.name || row.code }}</strong>
                           <span style="color:#94A3B8;font-family:monospace;font-size:10px;margin-left:4px;">{{ row.code }}</span>
                         </td>
-                        <td style="text-align:right;font-size:12px;padding:8px;border-bottom:1px solid #F1F5F9;font-family:monospace;">{{ row.old_weight.toFixed(1) }}%</td>
-                        <td style="text-align:right;font-size:12px;padding:8px;border-bottom:1px solid #F1F5F9;font-family:monospace;font-weight:bold;" :style="{color: row.delta_weight > 0 ? '#EF4444' : (row.delta_weight < 0 ? '#10B981' : '')}">{{ row.new_weight.toFixed(1) }}%</td>
-                        <td style="text-align:right;font-size:12px;padding:8px;border-bottom:1px solid #F1F5F9;font-family:monospace;" :style="{color: row.delta_amount > 0 ? '#EF4444' : (row.delta_amount < 0 ? '#10B981' : '')}">{{ row.delta_amount > 0 ? '+' : '' }}{{ Math.round(row.delta_amount).toLocaleString() }}</td>
-                        <td style="font-size:12px;padding:8px;border-bottom:1px solid #F1F5F9;">
+                        <td style="text-align:center;font-size:11px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
+                          <span style="padding:2px 8px;border-radius:10px;background:#EFF6FF;color:#3B82F6;font-size:10px;">{{ row.asset_class || '—' }}</span>
+                        </td>
+                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;color:#94A3B8;">{{ row.old_weight.toFixed(1) }}%</td>
+                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;font-weight:600;" :style="{color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#475569')}">{{ row.new_weight.toFixed(1) }}%</td>
+                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;font-weight:600;" :style="{color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#94A3B8')}">{{ row.delta_weight > 0 ? '+' : '' }}{{ row.delta_weight.toFixed(2) }}%</td>
+                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;" :style="{color: row.delta_amount > 0 ? '#EF4444' : (row.delta_amount < 0 ? '#10B981' : '')}">{{ row.delta_amount > 0 ? '+' : '' }}{{ (row.delta_amount / 10000).toFixed(1) }}</td>
+                        <td style="font-size:11px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
                           <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:500;"
-                            :style="{background: row.reason === '看多增配' ? '#F0FDF4' : (row.reason === '看空减配' ? '#FEF2F2' : '#F8FAFC'), color: row.reason === '看多增配' ? '#10B981' : (row.reason === '看空减配' ? '#EF4444' : '#94A3B8')}">{{ row.reason }}</span>
+                            :style="{background: row.delta_weight > 0.5 ? '#FEF2F2' : (row.delta_weight < -0.5 ? '#F0FDF4' : '#F8FAFC'), color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#94A3B8')}">{{ row.reason }}</span>
                         </td>
                       </tr>
                     </tbody>
                   </table>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- ── 宏观因子雷达图 ×3 + 大类资产观点 ── -->
+          <div v-if="rebalResult && rebalResult.radar" style="margin-bottom:28px;">
+            <div class="card-title">📡 宏观因子雷达图 & 大类资产观点</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;">
+              <template v-for="(label, key) in rebalTableKeys" :key="'radar_'+key">
+                <div class="card" v-if="rebalResult.radar[key]" style="padding:16px;">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:8px;">{{ label }}</div>
+                  <!-- Radar chart -->
+                  <div :ref="el => { if (el) radarRefs[key] = el }" style="height:260px;"></div>
+                  <!-- Asset class direction table -->
+                  <div v-if="rebalResult.asset_views && rebalResult.asset_views[key]" style="margin-top:8px;">
+                    <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px;">大类资产观点</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                      <span v-for="av in rebalResult.asset_views[key]" :key="av.asset"
+                        style="padding:4px 10px;border-radius:16px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px;"
+                        :style="{
+                          background: av.direction === '超配' ? '#FEF2F2' : (av.direction === '低配' ? '#EFF6FF' : '#F8FAFC'),
+                          color: av.direction === '超配' ? '#DC2626' : (av.direction === '低配' ? '#2563EB' : '#94A3B8'),
+                          border: '1px solid ' + (av.direction === '超配' ? '#FECACA' : (av.direction === '低配' ? '#BFDBFE' : '#E2E8F0'))
+                        }">
+                        <span>{{ av.direction === '超配' ? '🔴' : (av.direction === '低配' ? '🔵' : '⚪') }}</span>
+                        {{ av.asset }} {{ av.direction }}
+                        <span style="font-family:monospace;font-size:10px;">({{ av.score > 0 ? '+' : '' }}{{ av.score.toFixed(2) }})</span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- ── EGARCH 条件波动率图 ── -->
+          <div v-if="rebalResult && rebalResult.egarch && Object.keys(rebalResult.egarch).length > 0" style="margin-bottom:28px;">
+            <div class="card-title">📈 EGARCH 条件波动率追踪</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(450px,1fr));gap:16px;">
+              <template v-for="(data, key) in rebalResult.egarch" :key="'eg_'+key">
+                <div class="card" style="padding:16px;">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <div style="font-weight:600;font-size:14px;">{{ data.label }}</div>
+                    <span v-if="!data.bypassed" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;"
+                      :style="{background: data.gamma < -0.03 ? '#FEF2F2' : '#F0FDF4', color: data.gamma < -0.03 ? '#DC2626' : '#10B981'}">
+                      γ={{ data.gamma }} {{ data.asymmetry }}
+                    </span>
+                  </div>
+                  <div v-if="data.bypassed" style="padding:32px;text-align:center;color:#94A3B8;font-size:13px;">
+                    ⚠️ {{ data.reason || 'EGARCH 已旁路' }}
+                  </div>
+                  <div v-else :ref="el => { if (el) egarchRefs[key] = el }" style="height:240px;"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- ── PCA 风险温度计 ── -->
+          <div v-if="rebalResult && rebalResult.pca && Object.keys(rebalResult.pca).length > 0" style="margin-bottom:28px;">
+            <div class="card-title">🌡️ PCA 风险温度计 (组合同质化监控)</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;">
+              <template v-for="(data, key) in rebalResult.pca" :key="'pca_'+key">
+                <div class="card" style="padding:16px;text-align:center;">
+                  <div style="font-weight:600;font-size:14px;margin-bottom:12px;">{{ data.label }}</div>
+                  <div :ref="el => { if (el) pcaRefs[key] = el }" style="height:200px;"></div>
+                  <div style="margin-top:4px;font-size:12px;font-weight:600;" :style="{color: data.color}">
+                    PC1 = {{ data.pc1_ratio }}% — {{ data.text }}
+                  </div>
                 </div>
               </template>
             </div>
@@ -461,6 +686,7 @@
               </div>
             </div>
           </div>
+
         </div>
 
         <!-- Page 4: 🧭 宏观象限调仓 -->
@@ -602,7 +828,7 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import api, { uploadHoldings, optimizeHrp, getRebalanceInstructions, extractNewsViews, extractReportViews, optimizeBl, getMacroQuadrant, optimizeMbl, optimizeFactorRp, generatedApi } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
@@ -627,6 +853,109 @@ const rebalTableKeys = computed(() => {
   if (rebalResult.value?.has_report) base['report'] = '📄 研报调仓'
   return base
 })
+
+// ── Chart refs for rebalance visualizations ──
+const radarRefs = reactive({})
+const egarchRefs = reactive({})
+const pcaRefs = reactive({})
+
+watch(rebalResult, async (val) => {
+  if (!val) return
+  await nextTick()
+  // Allow DOM to mount
+  await new Promise(r => setTimeout(r, 100))
+  renderRebalCharts(val)
+}, { deep: true })
+
+function renderRebalCharts(result) {
+  // ── Radar charts ──
+  if (result.radar) {
+    for (const [key, data] of Object.entries(result.radar)) {
+      const el = radarRefs[key]
+      if (!el) continue
+      const chart = echarts.init(el)
+      chart.setOption({
+        tooltip: { trigger: 'item' },
+        radar: {
+          indicator: data.indicators.map(ind => ({ name: ind.name, max: 1, min: -1 })),
+          center: ['50%', '50%'],
+          radius: '70%',
+          axisName: { color: '#475569', fontSize: 11 },
+          splitArea: { areaStyle: { color: ['rgba(59,130,246,0.02)', 'rgba(59,130,246,0.04)'] } },
+          splitLine: { lineStyle: { color: '#E2E8F0' } },
+          axisLine: { lineStyle: { color: '#CBD5E1' } },
+        },
+        series: [{
+          type: 'radar',
+          data: [{
+            value: data.values,
+            name: '因子得分',
+            areaStyle: { color: 'rgba(59,130,246,0.15)' },
+            lineStyle: { color: '#3B82F6', width: 2 },
+            itemStyle: { color: '#3B82F6' },
+          }]
+        }]
+      })
+    }
+  }
+
+  // ── EGARCH line charts ──
+  if (result.egarch) {
+    for (const [key, data] of Object.entries(result.egarch)) {
+      if (data.bypassed) continue
+      const el = egarchRefs[key]
+      if (!el) continue
+      const chart = echarts.init(el)
+      chart.setOption({
+        tooltip: { trigger: 'axis', formatter: params => {
+          const p = params[0]
+          return `<b>${p.name}</b><br/>条件波动率: ${(p.value * 100).toFixed(2)}%`
+        }},
+        xAxis: { type: 'category', data: data.dates, axisLabel: { fontSize: 10, color: '#94A3B8', rotate: 30, interval: Math.floor(data.dates.length / 6) }, axisLine: { lineStyle: { color: '#E2E8F0' } }, splitLine: { show: false } },
+        yAxis: { type: 'value', axisLabel: { formatter: v => (v * 100).toFixed(1) + '%', fontSize: 10, color: '#94A3B8' }, splitLine: { lineStyle: { color: '#F1F5F9' } } },
+        grid: { left: 50, right: 16, top: 16, bottom: 40 },
+        series: [{
+          type: 'line',
+          data: data.values,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: '#1E293B', width: 1.5 },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(30,41,59,0.12)' }, { offset: 1, color: 'rgba(30,41,59,0)' }] } },
+          markLine: { data: [{ type: 'average', name: '均值' }], lineStyle: { color: '#EF4444', type: 'dashed' }, label: { formatter: p => '均值 ' + (p.value * 100).toFixed(2) + '%', fontSize: 10 } },
+        }]
+      })
+    }
+  }
+
+  // ── PCA gauge charts ──
+  if (result.pca) {
+    for (const [key, data] of Object.entries(result.pca)) {
+      const el = pcaRefs[key]
+      if (!el) continue
+      const chart = echarts.init(el)
+      chart.setOption({
+        series: [{
+          type: 'gauge',
+          startAngle: 200,
+          endAngle: -20,
+          min: 0,
+          max: 100,
+          radius: '90%',
+          center: ['50%', '60%'],
+          progress: { show: true, width: 14, itemStyle: { color: data.color } },
+          pointer: { show: false },
+          axisLine: { lineStyle: { width: 14, color: [[0.4, '#10B981'], [0.6, '#F59E0B'], [1, '#EF4444']] } },
+          axisTick: { show: false },
+          splitLine: { show: false },
+          axisLabel: { show: false },
+          detail: { offsetCenter: [0, '10%'], formatter: '{value}%', fontSize: 22, fontWeight: 700, color: data.color },
+          data: [{ value: data.pc1_ratio }],
+        }]
+      })
+    }
+  }
+}
+
 
 function onRebalReportSelect(e) {
   const files = Array.from(e.target.files || [])
@@ -1496,6 +1825,26 @@ function initQuadrantChart() {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* ── Wind Sync Glass Bar Animations ── */
+.wind-sync-spin {
+  animation: wind-spin 2s linear infinite;
+}
+@keyframes wind-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.wind-progress-bar {
+  animation: wind-progress 2s ease-in-out infinite;
+}
+@keyframes wind-progress {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
 }
 </style>
 
