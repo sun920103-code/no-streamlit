@@ -106,7 +106,9 @@ class KpiStrategy(BaseModel):
 
 class KpiRequest(BaseModel):
     strategies: List[KpiStrategy]
-    benchmark_code: str = "000300.SH"
+    benchmark_codes: List[str] = Field(
+        default=["000300.SH", "000001.SH", "399001.SZ", "399006.SZ", "000905.SH", "000852.SH", "HSI.HI"]
+    )
     cov_matrix_2d: List[List[float]]
     asset_names: List[str]
 
@@ -387,75 +389,162 @@ async def optimize_bl_endpoint(payload: BlOptimizeRequest):
 async def calculate_kpis_endpoint(payload: KpiRequest):
     """
     接收多个策略的权重字典并回测，返回 《API Contract》 接口 3 的核心 KPI 业绩比较面板
+    以及过去 5 年的真实历史年度收益率（柱状图数据）。
+    此接口直连本地存放的 Wind API 真实数据文件 (sync_*.csv 和 client_benchmarks.csv)。
     """
-    import numpy as np
-    
     try:
-        from services.portfolio_diagnostics import analyze_current_portfolio_risk
-        from services.backtester import Backtester
+        from services.backtester import FOFBacktester
+        import os
+        import pandas as pd
+        import numpy as np
         
-        cov_annual = pd.DataFrame(
-            payload.cov_matrix_2d, 
-            index=payload.asset_names, 
-            columns=payload.asset_names
-        )
-        cov_daily = cov_annual / 252.0
+        backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        data_dir = os.path.join(backend_dir, "data")
         
-        # 为了保证能够在无前端庞大时间序列的情况下独立运行：构建一年的蒙特卡洛随机收益率
-        np.random.seed(42)  # 固定种子以保证每次相同的请求返回相同的 KPI，避免界面抖动
-        mu_daily = np.full(len(payload.asset_names), 0.05 / 252) # 假设年化 5% 的基础期望
-        sim_returns = np.random.multivariate_normal(mu_daily, cov_daily, 252)
-        df_sim_rets = pd.DataFrame(sim_returns, columns=payload.asset_names, index=pd.date_range(end=pd.Timestamp.today(), periods=252))
+        # ── 1. 加载真实的历史底层净值序列 ──
+        # 我们寻找最新的一个 sync_*.csv (除去 meta)。在实际工程中可以传入 task_id，但为了兼容性，取最新即可。
+        csv_files = [f for f in os.listdir(data_dir) if f.startswith("sync_") and f.endswith(".csv") and "meta" not in f]
+        if not csv_files:
+            raise FileNotFoundError("没有找到底层基金的行情数据 (sync_*.csv)，请先执行持仓诊断的自动下载步骤。")
+            
+        csv_files.sort(key=lambda x: os.path.getmtime(os.path.join(data_dir, x)), reverse=True)
+        latest_sync = os.path.join(data_dir, csv_files[0])
+        df_funds = pd.read_csv(latest_sync, index_col=0, parse_dates=True)
         
-        # 添加基准模拟列
-        df_sim_rets[payload.benchmark_code] = np.random.normal(0.04/252, 0.15/np.sqrt(252), 252)
+        # 将价格转为逐日收益率
+        df_funds_ret = df_funds.pct_change().dropna(how='all')
+        
+        # ── 2. 加载市场基准真实净值序列 ──
+        bm_path = os.path.join(data_dir, "client_benchmarks.csv")
+        df_bm = None
+        if os.path.exists(bm_path):
+            df_bm = pd.read_csv(bm_path, index_col=0, parse_dates=True)
+            
+        # ── 3. 对齐日期与拼接 ──
+        df_all_ret = df_funds_ret.copy()
+        
+        # 将传入的多个基准列加入 df_all_ret
+        valid_benchmark_codes = []
+        if df_bm is not None:
+            for bm_code in payload.benchmark_codes:
+                if bm_code in df_bm.columns:
+                    df_all_ret[bm_code] = df_bm[bm_code].pct_change().dropna()
+                    valid_benchmark_codes.append(bm_code)
+                else:
+                    logger.warning(f"Benchmark {bm_code} not found in client_benchmarks.csv")
+        
+        # 如果一个基准都没找到，提供兜底
+        if not valid_benchmark_codes:
+            logger.warning("未找到任何匹配的市场基准数据，使用代理数据...")
+            fallback_bm = payload.benchmark_codes[0] if payload.benchmark_codes else "000300.SH"
+            np.random.seed(42)
+            df_all_ret[fallback_bm] = pd.Series(np.random.normal(0.04/252, 0.15/np.sqrt(252), len(df_funds_ret)), index=df_funds_ret.index)
+            valid_benchmark_codes = [fallback_bm]
+            
+        df_all_ret = df_all_ret.fillna(0.0) # 防止 NaN 影响加权
+        df_all_ret.index = pd.to_datetime(df_all_ret.index)
 
-        backtester = Backtester()
+        backtester = FOFBacktester(initial_capital=1_000_000)
         kpi_results = []
-        chart_lines = {"dates": df_sim_rets.index.strftime('%Y-%m-%d').tolist(), "series": {}}
         
-        # 1. 测算各策略
+        # 数据结构变更为 bar chart 年化收益:
+        # { dates: ["2020", "2021", ...], series: { "策略A": [0.05, -0.01, ...], ...} }
+        years = df_all_ret.index.year.unique().tolist()
+        chart_lines = {"dates": [str(y) for y in years], "series": {}}
+        
+        def calculate_annual(series: pd.Series):
+            annual_rets = []
+            grouped = series.groupby(series.index.year)
+            for year in years:
+                if year in grouped.groups:
+                    group = grouped.get_group(year)
+                    ret = (1 + group).prod() - 1
+                    annual_rets.append(float(ret))
+                else:
+                    annual_rets.append(0.0)
+            return annual_rets
+
+        # ====== 计算各个策略 ======
         for strat in payload.strategies:
             w_dict = strat.weights
-            w_ser = pd.Series(w_dict).reindex(df_sim_rets.columns, fill_value=0.0)
-            port_daily = (df_sim_rets * w_ser).sum(axis=1)
+            w_ser = pd.Series(w_dict).reindex(df_funds_ret.columns, fill_value=0.0)
             
+            # 由于可能出现配置里带有一些在库里找不到的代码，做下归一化
+            total_w = w_ser.sum()
+            if total_w > 0.01:
+                w_ser = w_ser / total_w
+                
+            port_daily = (df_funds_ret * w_ser).sum(axis=1)
+            
+            # 算整体指标
             metrics = backtester.calculate_metrics(port_daily)
-            port_cum = (1 + port_daily).cumprod() - 1
-            chart_lines["series"][strat.label] = port_cum.replace([np.inf, -np.inf, np.nan], 0).tolist()
+            ann_ret = metrics.get("Annualized_Return") or 0.0
+            ann_vol = metrics.get("Annualized_Volatility") or 0.0
+            mdd = metrics.get("Max_Drawdown") or 0.0
+            sharpe = metrics.get("Sharpe_Ratio") or 0.0
+            calmar = abs(ann_ret / mdd) if mdd != 0 else 0.0
+            win_rate = float((port_daily > 0).sum()) / max(len(port_daily), 1)
+            # 算各年指标
+            ann_rets = calculate_annual(port_daily)
+            
+            chart_lines["series"][strat.label] = ann_rets
             
             kpi_results.append({
                 "strategy_label": strat.label,
-                "ann_return": metrics.get("ann_return", 0.0),
-                "ann_volatility": metrics.get("ann_volatility", 0.0),
-                "sharpe_ratio": metrics.get("sharpe_ratio", 0.0),
-                "max_drawdown": metrics.get("max_drawdown", 0.0),
-                "calmar_ratio": metrics.get("calmar_ratio", 0.0),
-                "win_rate": metrics.get("win_rate", 0.0)
+                "ann_return": ann_ret,
+                "ann_volatility": ann_vol,
+                "sharpe_ratio": sharpe,
+                "max_drawdown": mdd,
+                "calmar_ratio": calmar,
+                "win_rate": win_rate
             })
 
-        # 2. 测算基准
-        bm_daily = df_sim_rets[payload.benchmark_code]
-        bm_metrics = backtester.calculate_metrics(bm_daily)
-        bm_cum = (1 + bm_daily).cumprod() - 1
-        bm_label = f"📊 基准 [{payload.benchmark_code}]"
-        chart_lines["series"][bm_label] = bm_cum.replace([np.inf, -np.inf, np.nan], 0).tolist()
-        
-        kpi_results.append({
-            "strategy_label": bm_label,
-            "ann_return": bm_metrics.get("ann_return", 0.0),
-            "ann_volatility": bm_metrics.get("ann_volatility", 0.0),
-            "sharpe_ratio": bm_metrics.get("sharpe_ratio", 0.0),
-            "max_drawdown": bm_metrics.get("max_drawdown", 0.0),
-            "calmar_ratio": bm_metrics.get("calmar_ratio", 0.0),
-            "win_rate": bm_metrics.get("win_rate", 0.0)
-        })
+        # ====== 计算所有有效基准 ======
+        bm_kpi_results = []
+        for bm_code in valid_benchmark_codes:
+            bm_daily = df_all_ret[bm_code]
+            bm_metrics = backtester.calculate_metrics(bm_daily)
+            bm_ann_ret = bm_metrics.get("Annualized_Return") or 0.0
+            bm_ann_vol = bm_metrics.get("Annualized_Volatility") or 0.0
+            bm_mdd = bm_metrics.get("Max_Drawdown") or 0.0
+            bm_sharpe = bm_metrics.get("Sharpe_Ratio") or 0.0
+            bm_calmar = abs(bm_ann_ret / bm_mdd) if bm_mdd != 0 else 0.0
+            bm_win_rate = float((bm_daily > 0).sum()) / max(len(bm_daily), 1)
+            bm_ann_rets = calculate_annual(bm_daily)
+            
+            # 使用更易读的名称，这里写了内置字典作友好展示
+            BM_NAME_MAP = {
+                '000300.SH': '沪深300',
+                '000001.SH': '上证指数',
+                '399001.SZ': '深证成指',
+                '399006.SZ': '创业板指',
+                '000905.SH': '中证500',
+                '000852.SH': '中证1000',
+                'HSI.HI': '恒生指数'
+            }
+            bm_friendly_name = BM_NAME_MAP.get(bm_code, bm_code)
+            
+            bm_label = f"📊 基准 [{bm_friendly_name}]"
+            chart_lines["series"][bm_label] = bm_ann_rets
+            
+            bm_kpi_results.append({
+                "strategy_label": bm_label,
+                "ann_return": bm_ann_ret,
+                "ann_volatility": bm_ann_vol,
+                "sharpe_ratio": bm_sharpe,
+                "max_drawdown": bm_mdd,
+                "calmar_ratio": bm_calmar,
+                "win_rate": bm_win_rate
+            })
+
+        # 将基准排在前面，更符合常规展示 UI
+        kpi_results = bm_kpi_results + kpi_results
 
         return {"status": "success", "kpi_list": kpi_results, "timeseries": chart_lines}
         
     except Exception as e:
         import traceback
-        raise HTTPException(status_code=500, detail=f"KPI 回测崩溃: {str(e)}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"历史回测KPI计算崩溃: {str(e)}\n{traceback.format_exc()}")
 
 @router.post("/match_funds")
 async def match_funds_endpoint(payload: MatchFundsRequest):

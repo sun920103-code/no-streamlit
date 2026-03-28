@@ -258,7 +258,7 @@ async def run_full_pipeline(
     uploaded_reports = []
     if files:
         for f in files:
-            if f.filename and f.size and f.size > 0:
+            if f.filename and f.filename.strip():
                 content = await f.read()
                 if content and len(content) > 10:
                     uploaded_reports.append((f.filename, content))
@@ -456,9 +456,38 @@ def _run_pipeline_sync(
             log_fn(f"✅ 新闻因子提取完成: {step2_news_digest[:50]}...")
 
             step2_asset_views = macro_factor_to_asset_views(step2_factors)
-            step2_weights = _asset_views_to_fund_weights(step2_asset_views, bare_codes, class_map)
+            
+            # --- BL Optimizer Upgrade ---
+            from services.bl_fusion import black_litterman_fusion
+            
+            # 准备协方差矩阵
+            if nav_df is not None and not nav_df.empty:
+                cov_matrix = nav_df.pct_change().dropna().cov()
+            else:
+                import numpy as np
+                n_assets = len(bare_codes)
+                cov_matrix = pd.DataFrame(
+                    np.eye(n_assets) * (0.15 / np.sqrt(252))**2, 
+                    index=bare_codes, columns=bare_codes
+                )
+            
+            # 格式化符合 BL 函数要求的观点字典
+            views_for_bl = {
+                ac: {"view": val, "confidence": 0.8} 
+                for ac, val in step2_asset_views.items()
+            }
+            
+            bl_weights, _ = black_litterman_fusion(
+                rp_weights=step1_weights,
+                cov_matrix=cov_matrix,
+                views=views_for_bl,
+                df_returns=nav_df,
+                orig_volatility=original_kpi.get('volatility', 0.0),
+                deviation_base=original_weights
+            )
+            step2_weights = bl_weights
 
-            log_fn("✅ Step 2 完成: 新闻资讯调仓就绪")
+            log_fn("✅ Step 2 完成: 新闻资讯调仓就绪 (Black-Litterman 优化)")
         else:
             log_fn("⚠️ 新闻因子提取无结果, 使用中性观点")
             step2_factors = {f: 0.0 for f in MACRO_FACTORS_6}
@@ -518,26 +547,47 @@ def _run_pipeline_sync(
                     try:
                         import services.multi_agent as _ma_mod
                         _moe_meta = getattr(_ma_mod, '_last_moe_metadata', None) or {}
-                        _modifiers = _moe_meta.get("sensitivity_modifiers", {})
-                        for f in MACRO_FACTORS_6:
-                            mod_val = _modifiers.get(f, 1.0)
-                            step3_factors[f] = round((mod_val - 1.0) * 2.0, 3)
+                        if "factor_scores" in _moe_meta:
+                            for f in MACRO_FACTORS_6:
+                                step3_factors[f] = _moe_meta["factor_scores"].get(f, 0.0)
+                        else:
+                            _modifiers = _moe_meta.get("sensitivity_modifiers", {})
+                            for f in MACRO_FACTORS_6:
+                                mod_val = _modifiers.get(f, 1.0)
+                                step3_factors[f] = round((mod_val - 1.0) * 2.0, 3)
                     except Exception:
                         pass
 
-                    _asset_scores_moe = {}
-                    for cls, vdata in bl_views.items():
-                        if isinstance(vdata, dict):
-                            _asset_scores_moe[cls] = vdata.get("sentiment_score", vdata.get("view", 0) * 5)
-                    if _asset_scores_moe:
-                        avg_score = sum(_asset_scores_moe.values()) / max(len(_asset_scores_moe), 1)
-                        for f in MACRO_FACTORS_6:
-                            if step3_factors[f] == 0.0:
-                                step3_factors[f] = round(avg_score * 0.3, 3)
-
                     step3_factors = _normalize_factor_keys(step3_factors)
                     step3_asset_views = macro_factor_to_asset_views(step3_factors)
-                    step3_weights = _asset_views_to_fund_weights(step3_asset_views, bare_codes, class_map)
+                    
+                    # --- BL Optimizer Upgrade ---
+                    from services.bl_fusion import black_litterman_fusion
+                    
+                    if nav_df is not None and not nav_df.empty:
+                        cov_matrix = nav_df.pct_change().dropna().cov()
+                    else:
+                        import numpy as np
+                        n_assets = len(bare_codes)
+                        cov_matrix = pd.DataFrame(
+                            np.eye(n_assets) * (0.15 / np.sqrt(252))**2, 
+                            index=bare_codes, columns=bare_codes
+                        )
+                    
+                    views_for_bl = {
+                        ac: {"view": val, "confidence": 0.8} 
+                        for ac, val in step3_asset_views.items()
+                    }
+                    
+                    bl_weights, _ = black_litterman_fusion(
+                        rp_weights=step2_weights,
+                        cov_matrix=cov_matrix,
+                        views=views_for_bl,
+                        df_returns=nav_df,
+                        orig_volatility=original_kpi.get('volatility', 0.0),
+                        deviation_base=original_weights
+                    )
+                    step3_weights = bl_weights
 
                 log_fn("✅ Step 3 完成: 研报 MOE 调仓就绪")
             else:
@@ -682,7 +732,7 @@ def _run_pipeline_sync(
                         egarch_data[key] = {"label": label, "bypassed": True, "reason": "波动率不足"}
                         continue
 
-                    model = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, q=1, dist='skewt', rescale=False)
+                    model = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, o=1, q=1, dist='skewt', rescale=False)
                     res = model.fit(disp='off')
                     cond_vol = res.conditional_volatility / 100
                     gamma_keys = [k for k in res.params.index if 'gamma' in k.lower()]

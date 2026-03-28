@@ -16,7 +16,7 @@
           <div style="display:flex; align-items:baseline; gap:8px;">
             <span style="font-family:'Manrope',sans-serif; font-weight:800; font-size:32px; color:#191C1D;">¥{{ holdingsTotal > 0 ? formatNumber(holdingsTotal) : '0' }}</span>
             <span v-if="avgMonthlyPl !== 0" 
-              :style="{ color: avgMonthlyPl >= 0 ? '#0c5216' : '#93000a', background: avgMonthlyPl >= 0 ? '#acf4a4' : '#ffdad6', padding:'2px 8px', borderRadius:'9999px', fontSize:'12px', fontWeight:700 }">
+              :style="{ color: avgMonthlyPl >= 0 ? '#93000a' : '#0c5216', background: avgMonthlyPl >= 0 ? '#ffdad6' : '#acf4a4', padding:'2px 8px', borderRadius:'9999px', fontSize:'12px', fontWeight:700 }">
               {{ avgMonthlyPl > 0 ? '+' : '' }}{{ avgMonthlyPl.toFixed(1) }}%
             </span>
             <span v-else style="color:#74777d; background:#e1e3e4; padding:2px 8px; border-radius:9999px; font-size:12px; font-weight:700;">0.0%</span>
@@ -61,10 +61,10 @@
               </div>
               <div style="flex:1;"></div>
               <div style="text-align:right;">
-                <p :style="{ margin:0, fontWeight:800, fontSize:'14px', color: (q.pct_chg ?? 0) >= 0 ? '#ba1a1a' : '#0c5216' }">
+                <p :style="{ margin:0, fontWeight:800, fontSize:'14px', color: (q.pct_chg ?? 0) >= 0 ? '#DC2626' : '#00E676' }">
                   {{ q.close != null ? q.close.toLocaleString() : '—' }}
                 </p>
-                <p :style="{ margin:0, fontWeight:600, fontSize:'10px', color: (q.pct_chg ?? 0) >= 0 ? '#ba1a1a' : '#0c5216' }">
+                <p :style="{ margin:0, fontWeight:600, fontSize:'10px', color: (q.pct_chg ?? 0) >= 0 ? '#DC2626' : '#00E676' }">
                   {{ q.pct_chg != null ? ((q.pct_chg > 0 ? '+' : '') + q.pct_chg.toFixed(2) + '%') : '—' }}
                 </p>
               </div>
@@ -234,13 +234,13 @@
                         <span style="font-size:11px;font-weight:600;width:46px;text-align:right;">{{ (h.proportion * 100).toFixed(2) }}%</span>
                       </div>
                     </td>
-                    <td :style="{ textAlign: 'right', fontWeight: 700, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.monthly_pl || 0) >= 0 ? '#16A34A' : '#DC2626' }">
+                    <td :style="{ textAlign: 'right', fontWeight: 700, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.monthly_pl || 0) >= 0 ? '#DC2626' : '#00E676' }">
                       {{ (fundEnhanced[h.code]?.monthly_pl || 0) > 0 ? '+' : '' }}{{ (fundEnhanced[h.code]?.monthly_pl || 0).toFixed(2) }}%
                     </td>
-                    <td :style="{ textAlign: 'right', fontWeight: 600, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.ret_ytd ?? 0) >= 0 ? '#16A34A' : '#DC2626' }">
+                    <td :style="{ textAlign: 'right', fontWeight: 600, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.ret_ytd ?? 0) >= 0 ? '#DC2626' : '#00E676' }">
                       {{ fundEnhanced[h.code]?.ret_ytd != null ? ((fundEnhanced[h.code].ret_ytd > 0 ? '+' : '') + fundEnhanced[h.code].ret_ytd.toFixed(2) + '%') : '—' }}
                     </td>
-                    <td :style="{ textAlign: 'right', fontWeight: 600, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.ret_1y ?? 0) >= 0 ? '#16A34A' : '#DC2626' }">
+                    <td :style="{ textAlign: 'right', fontWeight: 600, fontFamily: '\'JetBrains Mono\',monospace', color: (fundEnhanced[h.code]?.ret_1y ?? 0) >= 0 ? '#DC2626' : '#00E676' }">
                       {{ fundEnhanced[h.code]?.ret_1y != null ? ((fundEnhanced[h.code].ret_1y > 0 ? '+' : '') + fundEnhanced[h.code].ret_1y.toFixed(2) + '%') : '—' }}
                     </td>
                     <td style="text-align:right;color:#64748B;font-weight:500;">{{ (fundEnhanced[h.code]?.volatility || 0).toFixed(1) }}%</td>
@@ -269,7 +269,7 @@
                     </td>
                     <td style="text-align:center;font-weight:700;">100.00%</td>
                     <td style="text-align:right;">
-                      <div :style="{ color: avgMonthlyPl >= 0 ? '#16A34A' : '#DC2626', fontSize: '14px', fontWeight: 700 }">
+                      <div :style="{ color: avgMonthlyPl >= 0 ? '#DC2626' : '#00E676', fontSize: '14px', fontWeight: 700 }">
                         {{ avgMonthlyPl > 0 ? '+' : '' }}{{ avgMonthlyPl.toFixed(2) }}%
                       </div>
                     </td>
@@ -472,7 +472,7 @@
                 <span class="material-symbols-outlined" style="flex-shrink:0;font-size:20px;"
                   :style="{
                     color: log.includes('完成') || log.includes('✅') ? '#0c5216' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? '#72869e' : log.includes('全部') ? '#0c5216' : '#72869e',
-                    fontVariationSettings: log.includes('完成') || log.includes('✅') ? \"'FILL' 1\" : log.includes('全部') ? \"'FILL' 1\" : \"'FILL' 0\"
+                    fontVariationSettings: log.includes('完成') || log.includes('✅') || log.includes('全部') ? '\'FILL\' 1' : '\'FILL\' 0'
                   }">
                   {{ log.includes('全部') ? 'verified' : log.includes('完成') || log.includes('✅') ? 'check_circle' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? 'info' : log.includes('EGARCH') ? 'query_stats' : log.includes('PCA') ? 'analytics' : log.includes('计算') ? 'calculate' : 'radio_button_checked' }}
                 </span>
@@ -558,90 +558,115 @@
           </div>
 
           <!-- ── 调仓明细表格 (含资产类别/权重/金额/理由) ── -->
-          <div v-if="rebalResult && rebalResult.tables" style="margin-bottom:28px;">
-            <div class="card-title">📋 调仓明细</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(500px,1fr));gap:16px;">
+          <div v-if="rebalResult && rebalResult.tables" class="mb-8 font-manrope">
+            <!-- 三联调仓看板容器 (横向布局) -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              
               <template v-for="(label, key) in rebalTableKeys" :key="key">
-                <div class="card" v-if="rebalResult.tables[key] && rebalResult.tables[key].length > 0" style="padding:16px;overflow-x:auto;">
-                  <div style="font-weight:600;font-size:14px;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #E2E8F0;">{{ label }}</div>
-                  <table style="width:100%;border-collapse:collapse;min-width:480px;">
-                    <thead>
-                      <tr>
-                        <th style="text-align:left;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">基金</th>
-                        <th style="text-align:center;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">类别</th>
-                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">原%</th>
-                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">新%</th>
-                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">偏离</th>
-                        <th style="text-align:right;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">金额(万)</th>
-                        <th style="text-align:left;font-size:11px;font-weight:600;padding:8px;background:#F8FAFC;border-bottom:1px solid #E2E8F0;">理由</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr v-for="row in rebalResult.tables[key]" :key="row.code" style="transition:background 0.15s;" @mouseenter="$event.currentTarget.style.background='#F8FAFC'" @mouseleave="$event.currentTarget.style.background=''">
-                        <td style="font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
-                          <strong>{{ row.name || row.code }}</strong>
-                          <span style="color:#94A3B8;font-family:monospace;font-size:10px;margin-left:4px;">{{ row.code }}</span>
-                        </td>
-                        <td style="text-align:center;font-size:11px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
-                          <span style="padding:2px 8px;border-radius:10px;background:#EFF6FF;color:#3B82F6;font-size:10px;">{{ row.asset_class || '—' }}</span>
-                        </td>
-                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;color:#94A3B8;">{{ row.old_weight.toFixed(1) }}%</td>
-                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;font-weight:600;" :style="{color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#475569')}">{{ row.new_weight.toFixed(1) }}%</td>
-                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;font-weight:600;" :style="{color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#94A3B8')}">{{ row.delta_weight > 0 ? '+' : '' }}{{ row.delta_weight.toFixed(2) }}%</td>
-                        <td style="text-align:right;font-size:12px;padding:6px 8px;border-bottom:1px solid #F1F5F9;font-family:monospace;" :style="{color: row.delta_amount > 0 ? '#EF4444' : (row.delta_amount < 0 ? '#10B981' : '')}">{{ row.delta_amount > 0 ? '+' : '' }}{{ (row.delta_amount / 10000).toFixed(1) }}</td>
-                        <td style="font-size:11px;padding:6px 8px;border-bottom:1px solid #F1F5F9;">
-                          <span style="padding:2px 8px;border-radius:10px;font-size:10px;font-weight:500;"
-                            :style="{background: row.delta_weight > 0.5 ? '#FEF2F2' : (row.delta_weight < -0.5 ? '#F0FDF4' : '#F8FAFC'), color: row.delta_weight > 0.5 ? '#EF4444' : (row.delta_weight < -0.5 ? '#10B981' : '#94A3B8')}">{{ row.reason }}</span>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                <div v-if="rebalResult.tables[key] && rebalResult.tables[key].length > 0" class="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                  <div class="px-6 py-5 border-b border-slate-50 flex items-center gap-3">
+                    <span class="material-symbols-outlined text-blue-600 text-xl">{{ key === 'report' ? 'assessment' : (key === 'news' ? 'newspaper' : 'grid_view') }}</span>
+                    <h2 class="text-lg font-bold text-[#001529]">{{ label }}</h2>
+                  </div>
+
+                  <!-- 表格部分 -->
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                      <thead>
+                        <tr class="bg-slate-50/50 text-[11px] uppercase tracking-wider text-slate-400">
+                          <th class="px-6 py-4 font-semibold whitespace-nowrap">基金名称</th>
+                          <th class="px-4 py-4 font-semibold whitespace-nowrap">类型</th>
+                          <th class="px-4 py-4 font-semibold text-right whitespace-nowrap">旧 %</th>
+                          <th class="px-4 py-4 font-semibold text-right whitespace-nowrap">新 %</th>
+                          <th class="px-4 py-4 font-semibold text-right whitespace-nowrap">偏差</th>
+                          <th class="px-6 py-4 font-semibold whitespace-nowrap">调仓原因</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-slate-50">
+                        <tr v-for="row in rebalResult.tables[key]" :key="row.code" class="hover:bg-blue-50/30 transition-colors group text-xs">
+                          <td class="px-6 py-5">
+                            <div class="font-bold text-[#001529] whitespace-nowrap">{{ row.name || row.code }}</div>
+                          </td>
+                          <td class="px-4 py-5 text-slate-500 whitespace-nowrap">{{ row.asset_class || '—' }}</td>
+                          <td class="px-4 py-5 text-right font-medium text-slate-600 whitespace-nowrap">{{ row.old_weight.toFixed(1) }}%</td>
+                          <td class="px-4 py-5 text-right font-bold text-[#001529] whitespace-nowrap">{{ row.new_weight.toFixed(1) }}%</td>
+                          <td class="px-4 py-5 text-right font-bold whitespace-nowrap" :class="row.delta_weight > 0 ? 'text-red-500' : (row.delta_weight < 0 ? 'text-emerald-500' : 'text-slate-400')">
+                            {{ row.delta_weight > 0 ? '+' : '' }}{{ row.delta_weight.toFixed(2) }}%
+                          </td>
+                          <td class="px-6 py-5 text-slate-400 leading-relaxed min-w-[180px]">
+                            {{ row.reason }}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </template>
+              
             </div>
           </div>
 
           <!-- ── 宏观因子雷达图 ×3 + 大类资产观点 ── -->
-          <div v-if="rebalResult && rebalResult.radar" style="margin-bottom:28px;">
-            <div class="card-title">📡 宏观因子雷达图 & 大类资产观点</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;">
+          <!-- ── 宏观因子雷达图 ×3 + 大类资产观点 ── -->
+          <div v-if="rebalResult && rebalResult.radar" class="mb-16 font-body">
+            <!-- Dashboard Header -->
+            <header class="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6">
+              <div class="space-y-2">
+                <div class="flex items-center gap-3">
+                  <div class="w-2.5 h-10 bg-[#001529]"></div>
+                  <h1 class="font-extrabold text-3xl tracking-tight text-[#001529] uppercase" style="font-family:'Manrope', sans-serif;">宏观因子和大类资产观点</h1>
+                </div>
+                <p class="text-[#43474d] text-sm tracking-widest pl-5 font-semibold uppercase" style="font-family:'Inter', sans-serif;">INSTITUTIONAL GRADE MULTI-FACTOR ANALYSIS</p>
+              </div>
+            </header>
+
+            <!-- Triple Radar Row (Desktop Horizontal) — SVG 版 -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 relative z-10">
               <template v-for="(label, key) in rebalTableKeys" :key="'radar_'+key">
-                <div class="card" v-if="rebalResult.radar[key]" style="padding:16px;">
-                  <div style="font-weight:600;font-size:14px;margin-bottom:8px;">{{ label }}</div>
-                  <!-- Radar chart -->
-                  <div :ref="el => { if (el) radarRefs[key] = el }" style="height:260px;"></div>
-                  <!-- Asset class direction table -->
-                  <div v-if="rebalResult.asset_views && rebalResult.asset_views[key]" style="margin-top:8px;">
-                    <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px;">大类资产观点</div>
-                    <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                      <span v-for="av in rebalResult.asset_views[key]" :key="av.asset"
-                        style="padding:4px 10px;border-radius:16px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px;"
-                        :style="{
-                          background: av.direction === '超配' ? '#FEF2F2' : (av.direction === '低配' ? '#EFF6FF' : '#F8FAFC'),
-                          color: av.direction === '超配' ? '#DC2626' : (av.direction === '低配' ? '#2563EB' : '#94A3B8'),
-                          border: '1px solid ' + (av.direction === '超配' ? '#FECACA' : (av.direction === '低配' ? '#BFDBFE' : '#E2E8F0'))
-                        }">
-                        <span>{{ av.direction === '超配' ? '🔴' : (av.direction === '低配' ? '🔵' : '⚪') }}</span>
-                        {{ av.asset }} {{ av.direction }}
-                        <span style="font-family:monospace;font-size:10px;">({{ av.score > 0 ? '+' : '' }}{{ av.score.toFixed(2) }})</span>
-                      </span>
+                <section v-if="rebalResult.radar[key]" class="bg-white rounded-xl shadow-lg shadow-black/5 overflow-hidden flex flex-col border border-[#c4c6cd]/10">
+                  <div class="p-6 bg-[#001529] text-white flex justify-between items-center">
+                    <h2 class="font-bold text-lg tracking-wide" style="font-family:'Manrope', sans-serif;">{{ label }}</h2>
+                    <span class="material-symbols-outlined text-xl">{{ key === 'report' ? 'analytics' : (key === 'news' ? 'newspaper' : 'account_balance') }}</span>
+                  </div>
+                  <div class="flex-1 p-8 flex flex-col items-center">
+                    <!-- SVG Radar Chart -->
+                    <div class="relative w-full aspect-square max-w-[280px] mb-8">
+                      <svg class="w-full h-full" viewBox="0 0 200 200">
+                        <polygon style="stroke:#e1e3e4;stroke-width:1;fill:none;" :points="getHexPoints(100,100,80)"></polygon>
+                        <polygon style="stroke:#e1e3e4;stroke-width:1;fill:none;" :points="getHexPoints(100,100,50)"></polygon>
+                        <polygon style="stroke:#e1e3e4;stroke-width:1;fill:none;" :points="getHexPoints(100,100,20)"></polygon>
+                        <line v-for="i in 6" :key="'ax_'+key+'_'+i" style="stroke:#e1e3e4;stroke-width:1;" x1="100" y1="100" :x2="100 + 80 * Math.sin((i-1) * Math.PI / 3)" :y2="100 - 80 * Math.cos((i-1) * Math.PI / 3)"></line>
+                        <polygon style="fill:rgba(14,165,233,0.2);stroke:#0EA5E9;stroke-width:2.5;" :points="getRadarDataPoints(100, 100, 80, rebalResult.radar[key].values)"></polygon>
+                        <text v-for="(ind, idx) in rebalResult.radar[key].indicators" :key="'lb_'+key+'_'+idx" class="fill-[#191c1d] text-[10px] font-bold" :text-anchor="getTextAnchor(idx, 6)" :x="100 + 95 * Math.sin(idx * Math.PI / 3)" :y="100 - 95 * Math.cos(idx * Math.PI / 3) + 4">{{ ind.name }}</text>
+                      </svg>
+                    </div>
+                    <div class="w-full space-y-4">
+                      <h3 class="text-[10px] font-bold uppercase tracking-widest text-[#43474d] border-b border-[#c4c6cd]/20 pb-2">大类资产观点</h3>
+                      <div class="flex flex-wrap gap-2" v-if="rebalResult.asset_views && rebalResult.asset_views[key]">
+                        <span v-for="av in rebalResult.asset_views[key]" :key="av.asset" class="inline-flex items-center px-3 py-1.5 rounded text-xs border" :class="{ 'bg-red-50 text-red-700 font-extrabold border-red-100': av.direction === '超配', 'bg-[#f0f4f8] text-[#003366] font-bold border-[#d1dce5]': av.direction === '中性' || av.direction === '维持原仓', 'bg-green-50 text-green-700 font-extrabold border-green-100': av.direction === '低配' }">
+                          <span class="w-1.5 h-1.5 rounded-full mr-2" :class="{ 'bg-[#FF0000] shadow-[0_0_4px_rgba(255,0,0,0.5)]': av.direction === '超配', 'bg-[#003366] shadow-[0_0_4px_rgba(0,51,102,0.3)]': av.direction === '中性' || av.direction === '维持原仓', 'bg-[#39FF14] shadow-[0_0_4px_rgba(57,255,20,0.5)]': av.direction === '低配' }"></span>
+                          {{ av.asset }} {{ av.direction === '维持原仓' ? '中性' : av.direction }}
+                          <span style="font-family:'JetBrains Mono', monospace; font-size:10px; margin-left:4px;" v-if="av.score">({{ av.score > 0 ? '+' : '' }}{{ av.score.toFixed(2) }})</span>
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                </section>
               </template>
             </div>
+
           </div>
 
           <!-- ── EGARCH 条件波动率图 ── -->
           <div v-if="rebalResult && rebalResult.egarch && Object.keys(rebalResult.egarch).length > 0" style="margin-bottom:28px;">
             <div class="card-title">📈 EGARCH 条件波动率追踪</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(450px,1fr));gap:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;">
               <template v-for="(data, key) in rebalResult.egarch" :key="'eg_'+key">
                 <div class="card" style="padding:16px;">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
                     <div style="font-weight:600;font-size:14px;">{{ data.label }}</div>
                     <span v-if="!data.bypassed" style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500;"
-                      :style="{background: data.gamma < -0.03 ? '#FEF2F2' : '#F0FDF4', color: data.gamma < -0.03 ? '#DC2626' : '#10B981'}">
+                      :style="{background: data.gamma < -0.03 ? '#FEF2F2' : '#F0FDF4', color: data.gamma < -0.03 ? '#DC2626' : '#00E676'}">
                       γ={{ data.gamma }} {{ data.asymmetry }}
                     </span>
                   </div>
@@ -654,21 +679,6 @@
             </div>
           </div>
 
-          <!-- ── PCA 风险温度计 ── -->
-          <div v-if="rebalResult && rebalResult.pca && Object.keys(rebalResult.pca).length > 0" style="margin-bottom:28px;">
-            <div class="card-title">🌡️ PCA 风险温度计 (组合同质化监控)</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;">
-              <template v-for="(data, key) in rebalResult.pca" :key="'pca_'+key">
-                <div class="card" style="padding:16px;text-align:center;">
-                  <div style="font-weight:600;font-size:14px;margin-bottom:12px;">{{ data.label }}</div>
-                  <div :ref="el => { if (el) pcaRefs[key] = el }" style="height:200px;"></div>
-                  <div style="margin-top:4px;font-size:12px;font-weight:600;" :style="{color: data.color}">
-                    PC1 = {{ data.pc1_ratio }}% — {{ data.text }}
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
 
           <!-- ── AI 投委会折叠面板 (仅研报 Step3) ── -->
           <div v-if="rebalResult && rebalResult.has_report && rebalResult.debate_logs && rebalResult.debate_logs.length > 0" class="card" style="margin-bottom:24px;">
@@ -746,9 +756,9 @@
               <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
                 <div v-for="item in mblResult.transmission_chain" :key="item.factor"
                      style="padding:12px 16px;border-radius:10px;text-align:center;min-width:100px;transition:transform 0.2s;"
-                     :style="{background: item.score>0?'#F0FDF4':'#FEF2F2',border:'1px solid '+(item.score>0?'#10B981':'#EF4444')}">
+                     :style="{background: item.score>0?'#FEF2F2':'#F0FDF4',border:'1px solid '+(item.score>0?'#EF4444':'#00E676')}">
                   <div style="font-weight:600;font-size:13px;">{{ item.factor }}</div>
-                  <div style="font-size:18px;font-weight:700;" :style="{color:item.score>0?'#10B981':'#EF4444'}">{{ item.score>0?'+':'' }}{{ item.score }}</div>
+                  <div style="font-size:18px;font-weight:700;" :style="{color:item.score>0?'#EF4444':'#00E676'}">{{ item.score>0?'+':'' }}{{ item.score }}</div>
                   <div style="font-size:11px;color:var(--text-muted);">×{{ item.regime_modifier }}={{ item.effective_score>0?'+':'' }}{{ item.effective_score }}</div>
                 </div>
               </div>
@@ -859,6 +869,38 @@ const radarRefs = reactive({})
 const egarchRefs = reactive({})
 const pcaRefs = reactive({})
 
+// ── SVG Radar 辅助函数 ──
+function getHexPoints(cx, cy, r) {
+  const pts = []
+  for (let i = 0; i < 6; i++) {
+    const angle = (i * Math.PI) / 3 - Math.PI / 2
+    pts.push(`${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`)
+  }
+  return pts.join(' ')
+}
+
+function getRadarDataPoints(cx, cy, maxR, values) {
+  if (!values || values.length === 0) return ''
+  const pts = []
+  const n = Math.min(values.length, 6)
+  for (let i = 0; i < n; i++) {
+    // values range: -1 to 1 → map to 0..maxR
+    const normalized = (Math.max(-1, Math.min(1, values[i])) + 1) / 2
+    const r = normalized * maxR
+    const angle = (i * Math.PI) / 3 - Math.PI / 2
+    pts.push(`${cx + r * Math.cos(angle)},${cy + r * Math.sin(angle)}`)
+  }
+  return pts.join(' ')
+}
+
+function getTextAnchor(idx, total) {
+  // For a 6-point hexagon starting at top
+  if (idx === 0) return 'middle'       // top
+  if (idx === 1 || idx === 2) return 'start' // right side
+  if (idx === 3) return 'middle'       // bottom
+  return 'end'                         // left side
+}
+
 watch(rebalResult, async (val) => {
   if (!val) return
   await nextTick()
@@ -868,36 +910,7 @@ watch(rebalResult, async (val) => {
 }, { deep: true })
 
 function renderRebalCharts(result) {
-  // ── Radar charts ──
-  if (result.radar) {
-    for (const [key, data] of Object.entries(result.radar)) {
-      const el = radarRefs[key]
-      if (!el) continue
-      const chart = echarts.init(el)
-      chart.setOption({
-        tooltip: { trigger: 'item' },
-        radar: {
-          indicator: data.indicators.map(ind => ({ name: ind.name, max: 1, min: -1 })),
-          center: ['50%', '50%'],
-          radius: '70%',
-          axisName: { color: '#475569', fontSize: 11 },
-          splitArea: { areaStyle: { color: ['rgba(59,130,246,0.02)', 'rgba(59,130,246,0.04)'] } },
-          splitLine: { lineStyle: { color: '#E2E8F0' } },
-          axisLine: { lineStyle: { color: '#CBD5E1' } },
-        },
-        series: [{
-          type: 'radar',
-          data: [{
-            value: data.values,
-            name: '因子得分',
-            areaStyle: { color: 'rgba(59,130,246,0.15)' },
-            lineStyle: { color: '#3B82F6', width: 2 },
-            itemStyle: { color: '#3B82F6' },
-          }]
-        }]
-      })
-    }
-  }
+  // Radar charts are now SVG-based (no ECharts needed)
 
   // ── EGARCH line charts ──
   if (result.egarch) {
@@ -1155,25 +1168,45 @@ function getStrategiesPayload() {
   
   const strats = [{ label: '📋 客户持仓', weights: clientWeights }];
   
-  if (hrpResultTable.value) {
-    const w = { ...clientWeights };
-    hrpResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
-    strats.push({ label: '🧭 宏观象限对应配置 [沪深300基准]', weights: w });
-  }
-  if (aiNewsResultTable.value) {
-    const w = { ...clientWeights };
-    aiNewsResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
-    strats.push({ label: '📡 资讯调仓', weights: w });
-  }
-  if (aiReportResultTable.value) {
-    const w = { ...clientWeights };
-    aiReportResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
-    strats.push({ label: '📄 研报调仓', weights: w });
+  // 优先从一键调仓管线(rebalResult)提取策略权重
+  if (rebalResult.value?.tables) {
+    if (rebalResult.value.tables.macro && rebalResult.value.tables.macro.length > 0) {
+      const w = {};
+      rebalResult.value.tables.macro.forEach(row => { w[row.code] = parseFloat(row.new_weight) / 100.0; });
+      strats.push({ label: '🧭 宏观象限对应配置', weights: w });
+    }
+    if (rebalResult.value.tables.news && rebalResult.value.tables.news.length > 0) {
+      const w = {};
+      rebalResult.value.tables.news.forEach(row => { w[row.code] = parseFloat(row.new_weight) / 100.0; });
+      strats.push({ label: '📡 资讯调仓', weights: w });
+    }
+    if (rebalResult.value.tables.report && rebalResult.value.tables.report.length > 0) {
+      const w = {};
+      rebalResult.value.tables.report.forEach(row => { w[row.code] = parseFloat(row.new_weight) / 100.0; });
+      strats.push({ label: '📄 研报调仓', weights: w });
+    }
+  } else {
+    // 兼容独立按钮调仓的结果
+    if (hrpResultTable.value) {
+      const w = { ...clientWeights };
+      hrpResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
+      strats.push({ label: '🧭 宏观象限对应配置', weights: w });
+    }
+    if (aiNewsResultTable.value) {
+      const w = { ...clientWeights };
+      aiNewsResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
+      strats.push({ label: '📡 资讯调仓', weights: w });
+    }
+    if (aiReportResultTable.value) {
+      const w = { ...clientWeights };
+      aiReportResultTable.value.instructions.forEach(ins => w[ins.code] += ins.delta_w);
+      strats.push({ label: '📄 研报调仓', weights: w });
+    }
   }
   
   return {
     strategies: strats,
-    benchmark_code: "000300.SH",
+    benchmark_codes: ["000300.SH", "000001.SH", "399001.SZ", "399006.SZ", "000905.SH", "000852.SH", "HSI.HI"],
     cov_matrix_2d: mockCov,
     asset_names: assetNames
   }
