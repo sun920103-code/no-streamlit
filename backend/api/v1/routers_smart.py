@@ -252,22 +252,25 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     # ── Step 3 & 4: 独立象限权重和多情景判定 ──
     _frp = _import_backend_service("factor_risk_parity")
     
-    # 获取基准稳健下的基础排布，用作 can_achieve 判断
-    base_rp_result = _frp.optimize_factor_risk_parity(
-        factor_scores=factor_scores_6,
-        max_volatility=max_vol_pct / 100.0,
-    )
-    base_vol = base_rp_result.get("estimated_volatility", 0.0)
-
-    # 载入基金池
-    fund_pool = _load_fund_pool()
-
     target_ret_decimal = target_ret_pct / 100.0
     max_vol_decimal = max_vol_pct / 100.0
     capital_yuan = capital_wan * 10000
 
-    # 判断波动率是否能覆盖用户目标
-    can_achieve = base_vol <= max_vol_decimal * 1.2  # 允许 20% 容差
+    # 获取基准稳健下的基础排布，用作 can_achieve 判断
+    base_rp_result = _frp.optimize_factor_risk_parity(
+        factor_scores=factor_scores_6,
+        max_volatility=max_vol_decimal,
+        target_return=target_ret_decimal,
+    )
+    base_vol = base_rp_result.get("estimated_volatility", 0.0)
+    base_ret = base_rp_result.get("estimated_return", 0.0)
+
+    # 载入基金池
+    fund_pool = _load_fund_pool()
+
+    # 判断风险约束下是否能"基本"摸到用户的收益目标 (允许20%相对容差或至少达到绝对值)
+    # 如果 user target 很高，但 max_vol 压得很死，base_ret 远远达不到目标，进入情景B
+    can_achieve = base_ret >= target_ret_decimal * 0.8  
 
     scenarios = []
 
@@ -282,9 +285,11 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             rp_result = _frp.optimize_factor_risk_parity(
                 factor_scores=factor_scores_6,
                 max_volatility=sc_max_vol,
+                target_return=sc_target_ret,
             )
             sc_base_weights = rp_result.get("target_weights", {})
             sc_estimated_vol = rp_result.get("estimated_volatility", sc_max_vol)
+            sc_estimated_ret = rp_result.get("estimated_return", sc_target_ret)
             
             scenario = _build_scenario(
                 name=scenario_name,
@@ -294,13 +299,14 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
                 capital=capital_yuan,
                 fund_pool=fund_pool,
                 ret_multiplier=ret_adj,
-                hrp_estimated_vol=sc_estimated_vol
+                hrp_estimated_vol=sc_estimated_vol,
+                hrp_estimated_ret=sc_estimated_ret
             )
             scenarios.append(scenario)
     else:
-        # 情景 B: 波动率无法满足 → 仅 1 套稳健 (以波动率为锚)
+        # 情景 B: 预期收益无法在低波动率下满足 → 仅 1 套稳健且以波动率为顶的防御性配置
         scenario = _build_scenario(
-            name="稳健配置 (波动率锚定)",
+            name="稳健配置 (受约束最大化夏普解)",
             base_weights=base_rp_result.get("target_weights", {}),
             target_ret=target_ret_decimal,
             max_vol=max_vol_decimal,
@@ -308,7 +314,8 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             fund_pool=fund_pool,
             ret_multiplier=1.0,
             vol_anchored=True,
-            hrp_estimated_vol=base_vol
+            hrp_estimated_vol=base_vol,
+            hrp_estimated_ret=base_ret
         )
         scenarios.append(scenario)
 
@@ -360,7 +367,7 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     }
 
 
-def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool, ret_multiplier, vol_anchored=False, hrp_estimated_vol=0.0):
+def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool, ret_multiplier, vol_anchored=False, hrp_estimated_vol=0.0, hrp_estimated_ret=0.0):
     """构建单个配置方案 (含KPI + 基金明细表)。"""
     import random
     import json
@@ -419,7 +426,7 @@ def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool,
     fund_profiles = []
 
     # KPI 估算 (基于每个情景实际的底座杠杆推演真实特征)
-    est_return = target_ret  # 修正:之前算法二次相乘导致了 11.5% 等虚高估值
+    est_return = hrp_estimated_ret if hrp_estimated_ret > 0 else (target_ret if not vol_anchored else min(target_ret, target_ret * 0.5))
     est_vol = hrp_estimated_vol if hrp_estimated_vol > 0 else (max_vol if vol_anchored else min(max_vol, max_vol * 0.9))
     est_sharpe = est_return / est_vol if est_vol > 1e-8 else 0
     est_max_dd = -est_vol * 1.35  # 粗估：大类资产最大回撤约为年化波动的 1.35 倍

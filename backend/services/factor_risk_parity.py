@@ -73,6 +73,7 @@ def optimize_factor_risk_parity(
     current_quadrant: Optional[str] = None,
     factor_scores: Optional[Dict[str, float]] = None,
     max_volatility: float = 0.15,
+    target_return: float = 0.0,
 ) -> Dict[str, Any]:
     """
     因子风险平价优化器 — 宏观象限对应配置的核心。
@@ -141,37 +142,50 @@ def optimize_factor_risk_parity(
     total = sum(weights.values())
     weights = {a: w / total for a, w in weights.items()}
     
-    # ── [NEW] Step 3.5: Risk Targeting (波动率目标自适应缩放) ──
-    # 将资产分类为风险和避险资产
+    # ── [NEW] Step 3.5: Risk Targeting (双约束最优夏普逼近) ──
     RISK_ASSETS = ["大盘核心", "科技成长", "红利防守", "黄金商品", "海外QDII"]
     SAFE_ASSETS = ["纯债固收", "混合债券", "短债理财"]
     
+    # 典型大类资产年化收益率先验 (供推演使用)
+    DEFAULT_RETURNS = {
+        "大盘核心": 0.08, "科技成长": 0.12, "红利防守": 0.06,
+        "纯债固收": 0.035, "混合债券": 0.05, "短债理财": 0.025,
+        "黄金商品": 0.07, "海外QDII": 0.09,
+    }
+
     current_vol = sum(weights.get(a, 0) * DEFAULT_VOLS.get(a, 0.15) for a in ASSET_CLASSES)
+    current_ret = sum(weights.get(a, 0) * DEFAULT_RETURNS.get(a, 0.05) for a in ASSET_CLASSES)
     
-    # 迭代逼近目标波动率 max_volatility (安全容限 0.2%)
     step_size = 0.05
-    tolerance = 0.002
+    tolerance_vol = 0.002
+    tolerance_ret = 0.002
     
+    target_return = target_return or 0.0
+
     for _ in range(50):
-        if current_vol < max_volatility - tolerance:
-            # 增加风险暴露：从低风险移库到高风险
-            safe_wt = sum(weights.get(a, 0) for a in SAFE_ASSETS)
-            if safe_wt <= 0.02: break 
-            for a in SAFE_ASSETS: weights[a] = weights.get(a, 0) * (1 - step_size)
-            for a in RISK_ASSETS: weights[a] = weights.get(a, 0) * (1 + step_size)
-        elif current_vol > max_volatility + tolerance:
-            # 缩减风险暴露：抛售风险资产购买低风险避险
+        # 状况1：波动率超标 -> 必须强制降杠杆，抛弃不切实际的收益幻想，强力压降波动
+        if current_vol > max_volatility + tolerance_vol:
             risk_wt = sum(weights.get(a, 0) for a in RISK_ASSETS)
             if risk_wt <= 0.02: break
-            for a in RISK_ASSETS: weights[a] = weights.get(a, 0) * (1 - step_size)
-            for a in SAFE_ASSETS: weights[a] = weights.get(a, 0) * (1 + step_size)
+            for a in RISK_ASSETS: weights[a] *= (1 - step_size)
+            for a in SAFE_ASSETS: weights[a] *= (1 + step_size)
+            
+        # 状况2：波动率没超标，但收益率还未达到目标 -> 提升风险敞口
+        elif current_ret < target_return - tolerance_ret and current_vol < max_volatility - tolerance_vol:
+            safe_wt = sum(weights.get(a, 0) for a in SAFE_ASSETS)
+            if safe_wt <= 0.02: break 
+            for a in SAFE_ASSETS: weights[a] *= (1 - step_size)
+            for a in RISK_ASSETS: weights[a] *= (1 + step_size)
+            
+        # 状况3：收益已经达标，且波动率未超限；或是两者都已经逼近临界点 -> 我们得到了夏普最优解，退出！
         else:
             break
             
-        # 再归一并重新测算
+        # 归一化并重新测算
         total_w = sum(weights.values())
         weights = {a: w / total_w for a, w in weights.items()}
         current_vol = sum(weights.get(a, 0) * DEFAULT_VOLS.get(a, 0.15) for a in ASSET_CLASSES)
+        current_ret = sum(weights.get(a, 0) * DEFAULT_RETURNS.get(a, 0.05) for a in ASSET_CLASSES)
 
     # 封顶格式化
     weights = {a: round(w, 4) for a, w in weights.items()}

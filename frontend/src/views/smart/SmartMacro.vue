@@ -80,9 +80,14 @@
     </div>
 
     <!-- ═══ 因子传导链条 ═══ -->
-    <div v-if="result && result.transmission_chain && result.transmission_chain.length" class="zx-card fade-in" style="margin-bottom:24px;">
-      <div class="zx-card-title">🎯 因子传导链条 (底仓生成依据)</div>
-      <div class="zx-chain-row">
+    <details v-if="result && result.transmission_chain && result.transmission_chain.length" class="zx-card fade-in group" style="margin-bottom:24px;">
+      <summary class="zx-card-title cursor-pointer flex items-center gap-2 outline-none select-none list-none [&::-webkit-details-marker]:hidden hover:text-primary transition-colors" style="margin-bottom:0;">
+        <span class="material-symbols-outlined text-primary text-xl">account_tree</span>
+        因子传导链条 (点击展开底仓生成依据)
+        <span class="material-symbols-outlined ml-auto text-on-surface-variant transition-transform group-open:rotate-180">expand_more</span>
+      </summary>
+      
+      <div class="zx-chain-row mt-6 pt-4 border-t border-surface-variant">
         <div v-for="item in result.transmission_chain" :key="item.factor"
           class="zx-chain-item"
           :style="{ background: item.score > 0 ? '#FEF2F2' : '#F0FDF4', border: '1px solid ' + (item.score > 0 ? '#FECACA' : '#BBF7D0') }">
@@ -93,7 +98,7 @@
           <div class="zx-chain-modifier">×{{ item.regime_modifier }}</div>
         </div>
       </div>
-    </div>
+    </details>
 
     <!-- ═══ KPI 卡片组 (每个方案一列) ═══ -->
     <div v-if="result && result.scenarios" class="zx-scenarios-grid fade-in">

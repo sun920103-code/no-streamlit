@@ -28,7 +28,7 @@
               <input type="number" v-model.number="store.zx_targetReturn" min="0" max="50" step="0.5" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
             </div>
             <div class="group">
-              <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">最大波动率 (%)</label>
+              <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">年化波动率 (%)</label>
               <input type="number" v-model.number="store.zx_maxVol" min="0" max="30" step="0.5" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
             </div>
           </div>
