@@ -15,8 +15,9 @@ if LEGACY_SERVICES_DIR not in sys.path:
     # 插入到最前面，确保优先加载祖传代码
     sys.path.insert(0, LEGACY_SERVICES_DIR)
 
-from services.hrp_engine import hrp_optimize
-from services.portfolio_diagnostics import generate_rebalance_instructions
+# 延迟导入 (防 services 包缓存遮蔽)
+# from services.hrp_engine import hrp_optimize
+# from services.portfolio_diagnostics import generate_rebalance_instructions
 
 router = APIRouter(prefix="/quant", tags=["Quant"])
 
@@ -125,6 +126,8 @@ async def optimize_hrp_endpoint(payload: CovarianceMatrixPayload):
     接受协方差矩阵，调用底层原汁原味的 hrp_optimize 算子，返回目标配置权重字典。
     """
     try:
+        from services.hrp_engine import hrp_optimize
+        from services.portfolio_diagnostics import generate_rebalance_instructions
         # 1. 组装 Pandas DataFrame 适配祖传代码输入
         cov_df = pd.DataFrame(
             payload.cov_matrix_2d, 
@@ -140,6 +143,7 @@ async def optimize_hrp_endpoint(payload: CovarianceMatrixPayload):
         # 2. 调用祖传核心引擎 —— 绝不私自重写其数学逻辑！
         # 返回: weights_dict, risk_contributions_dict, portfolio_vol, (_hrp_ejected_funds)
         result = hrp_optimize(
+
             cov_matrix=cov_df,
             max_weight=payload.max_weight,
             min_weight=payload.min_weight,
@@ -262,6 +266,7 @@ async def get_rebalance_instructions(payload: TargetWeightsRequest):
     严格对齐 API 合同中对 `instructions` 的字段、数值非空清洗要求。
     """
     try:
+        from services.portfolio_diagnostics import generate_rebalance_instructions
         # 调取旧服务
         # generate_rebalance_instructions 的 cov_matrix 用于计算跟踪误差(TE)，前端此 API 不强制依赖 TE，所以传空壳。
         raw_rebal_dict = generate_rebalance_instructions(
@@ -316,6 +321,7 @@ async def optimize_bl_endpoint(payload: BlOptimizeRequest):
     将提取出的大模型 nlp_scores 注入风险平价体系中，获取战术重置权重，立刻翻译为交易指令表。
     """
     try:
+        from services.portfolio_diagnostics import generate_rebalance_instructions
         from fastapi.concurrency import run_in_threadpool
         from services.subprocess_bl import run_bl_pipeline_safe
         

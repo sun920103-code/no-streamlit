@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from api.v1 import portfolio, analysis, report, routers_data, routers_quant, routers_ai, routers_export, routers_macro, routers_rebalance
+from api.v1 import portfolio, analysis, report, routers_data, routers_quant, routers_ai, routers_export, routers_macro, routers_rebalance, routers_smart
 from core.config import settings
 
 # ── 日志配置 ──
@@ -50,6 +50,7 @@ app.include_router(report.router,    prefix="/api/v1/report",    tags=["报告�
 app.include_router(routers_quant.router, prefix="/api/v1")
 app.include_router(routers_macro.router,    prefix="/api/v1",           tags=["宏观经济基座"])
 app.include_router(routers_rebalance.router, prefix="/api/v1",          tags=["一键配置调仓"])
+app.include_router(routers_smart.router,     prefix="/api/v1",          tags=["智选平台"])
 
 
 # ── 健康检查 ──

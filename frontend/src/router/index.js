@@ -8,7 +8,7 @@ const routes = [
   },
   {
     path: '/yc',
-    name: 'YueCai',
+
     component: () => import('../views/YueCaiShell.vue'),
     children: [
       { path: '', redirect: '/yc/hrp' },
@@ -23,10 +23,17 @@ const routes = [
     name: 'Diagnostics',
     component: () => import('../views/Diagnostics.vue'),
   },
+  // ═══ 智选平台 — 独立 Shell + 三页面流水线 ═══
   {
     path: '/smart',
-    name: 'SmartSelection',
-    component: () => import('../views/SmartSelectionManager.vue'),
+
+    component: () => import('../views/smart/SmartShell.vue'),
+    children: [
+      { path: '', redirect: '/smart/macro' },
+      { path: 'macro', name: 'SmartMacro', component: () => import('../views/smart/SmartMacro.vue') },
+      { path: 'tactical', name: 'SmartTactical', component: () => import('../views/smart/SmartTactical.vue') },
+      { path: 'backtest', name: 'SmartBacktest', component: () => import('../views/smart/SmartBacktest.vue') },
+    ],
   },
 ]
 

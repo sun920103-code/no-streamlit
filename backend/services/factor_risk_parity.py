@@ -139,8 +139,43 @@ def optimize_factor_risk_parity(
     
     # ── Step 3: 重新归一化 ──
     total = sum(weights.values())
-    weights = {a: round(w / total, 4) for a, w in weights.items()}
+    weights = {a: w / total for a, w in weights.items()}
     
+    # ── [NEW] Step 3.5: Risk Targeting (波动率目标自适应缩放) ──
+    # 将资产分类为风险和避险资产
+    RISK_ASSETS = ["大盘核心", "科技成长", "红利防守", "黄金商品", "海外QDII"]
+    SAFE_ASSETS = ["纯债固收", "混合债券", "短债理财"]
+    
+    current_vol = sum(weights.get(a, 0) * DEFAULT_VOLS.get(a, 0.15) for a in ASSET_CLASSES)
+    
+    # 迭代逼近目标波动率 max_volatility (安全容限 0.2%)
+    step_size = 0.05
+    tolerance = 0.002
+    
+    for _ in range(50):
+        if current_vol < max_volatility - tolerance:
+            # 增加风险暴露：从低风险移库到高风险
+            safe_wt = sum(weights.get(a, 0) for a in SAFE_ASSETS)
+            if safe_wt <= 0.02: break 
+            for a in SAFE_ASSETS: weights[a] = weights.get(a, 0) * (1 - step_size)
+            for a in RISK_ASSETS: weights[a] = weights.get(a, 0) * (1 + step_size)
+        elif current_vol > max_volatility + tolerance:
+            # 缩减风险暴露：抛售风险资产购买低风险避险
+            risk_wt = sum(weights.get(a, 0) for a in RISK_ASSETS)
+            if risk_wt <= 0.02: break
+            for a in RISK_ASSETS: weights[a] = weights.get(a, 0) * (1 - step_size)
+            for a in SAFE_ASSETS: weights[a] = weights.get(a, 0) * (1 + step_size)
+        else:
+            break
+            
+        # 再归一并重新测算
+        total_w = sum(weights.values())
+        weights = {a: w / total_w for a, w in weights.items()}
+        current_vol = sum(weights.get(a, 0) * DEFAULT_VOLS.get(a, 0.15) for a in ASSET_CLASSES)
+
+    # 封顶格式化
+    weights = {a: round(w, 4) for a, w in weights.items()}
+
     # ── Step 4: 计算最终因子风险贡献（供白盒前端展示） ──
     factor_risks = compute_factor_risk_contributions(weights)
     
