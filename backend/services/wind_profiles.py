@@ -152,3 +152,101 @@ def _get_empty_profile(code):
         "maxdrawdown": "暂无",
         "sharpe": "暂无"
     }
+
+
+def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
+    """
+    基于真实基金 NAV 时序数据计算组合级 KPI。
+    
+    :param allocations: [{"code": "000001.OF", "weight_pct": 10.5}, ...]
+    :param period_years: 回溯年数 (1/3/5)
+    :return: {"ann_vol_pct": 12.5, "max_drawdown_pct": -15.3, "ann_return_pct": 8.2, "sharpe": 0.65, "source": "wind"}
+             如果 Wind 不可用则返回 {"source": "fallback"}
+    """
+    if not allocations:
+        return {"source": "fallback"}
+    
+    codes = [a["code"] for a in allocations if a.get("weight_pct", 0) > 0.01]
+    weights_map = {a["code"]: a["weight_pct"] / 100.0 for a in allocations if a.get("weight_pct", 0) > 0.01}
+    
+    if not codes:
+        return {"source": "fallback"}
+    
+    try:
+        from WindPy import w
+        if not w.isconnected():
+            w.start()
+    except ImportError:
+        print("[WindError] WindPy not available for portfolio metrics.")
+        return {"source": "fallback"}
+    
+    # 拉取 NAV 时序
+    current_date = datetime.now()
+    start_date = (current_date - timedelta(days=365 * period_years + 30)).strftime("%Y-%m-%d")
+    end_date = current_date.strftime("%Y-%m-%d")
+    
+    res = w.wsd(','.join(codes), "nav_adj", start_date, end_date, "")
+    if res.ErrorCode != 0:
+        print(f"[Wind API ERROR] Portfolio NAV fetch failed: {res.ErrorCode}")
+        return {"source": "fallback"}
+    
+    # 构建 NAV DataFrame
+    if len(codes) == 1:
+        df_nav = pd.DataFrame({codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
+    else:
+        df_nav = pd.DataFrame(dict(zip(codes, res.Data)), index=pd.to_datetime(res.Times))
+    
+    df_nav.dropna(how='all', inplace=True)
+    df_nav.ffill(inplace=True)
+    
+    # 至少需要 60 个交易日的数据
+    valid_codes = [c for c in codes if c in df_nav.columns and df_nav[c].notna().sum() > 60]
+    if not valid_codes:
+        return {"source": "fallback"}
+    
+    # 计算各基金日收益率
+    df_returns = df_nav[valid_codes].pct_change().dropna(how='all')
+    df_returns.dropna(how='any', inplace=True)
+    
+    if len(df_returns) < 30:
+        return {"source": "fallback"}
+    
+    # 归一化权重 (仅保留有有效数据的基金)
+    total_w = sum(weights_map.get(c, 0) for c in valid_codes)
+    if total_w <= 0:
+        return {"source": "fallback"}
+    norm_weights = np.array([weights_map.get(c, 0) / total_w for c in valid_codes])
+    
+    # ── 组合日收益率序列 ──
+    portfolio_returns = (df_returns[valid_codes].values @ norm_weights)
+    
+    # ── 年化波动率 (基于日收益率) ──
+    daily_vol = np.std(portfolio_returns, ddof=1)
+    ann_vol = daily_vol * np.sqrt(242)
+    
+    # ── 年化收益率 ──
+    ann_ret = np.mean(portfolio_returns) * 242
+    
+    # ── 夏普比率 (无风险利率 2%) ──
+    sharpe = (ann_ret - 0.02) / ann_vol if ann_vol > 1e-8 else 0
+    
+    # ── 最大回撤 (基于组合净值曲线) ──
+    portfolio_nav = (1 + pd.Series(portfolio_returns)).cumprod()
+    cummax = portfolio_nav.cummax()
+    drawdowns = (portfolio_nav - cummax) / cummax
+    max_dd = drawdowns.min()
+    
+    # 如果用的是 3 年数据，需要年化最大回撤
+    # 最大回撤本身不年化，但如果 period > 1年，已经是整个区间的最大回撤
+    
+    return {
+        "ann_return_pct": round(float(ann_ret * 100), 2),
+        "ann_vol_pct": round(float(ann_vol * 100), 2),
+        "max_drawdown_pct": round(float(max_dd * 100), 2),
+        "sharpe": round(float(sharpe), 2),
+        "data_points": len(df_returns),
+        "valid_funds": len(valid_codes),
+        "total_funds": len(codes),
+        "source": "wind",
+    }
+

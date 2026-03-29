@@ -135,7 +135,7 @@
       </div>
 
       <div class="zx-footer">
-        © 2026 粤财信托 · 智选资产配置平台 · Powered by Antigravity
+        © 2026 粤财信托 · 智选资产配置平台
       </div>
     </main>
   </div>

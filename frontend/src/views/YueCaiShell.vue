@@ -93,7 +93,7 @@
         </router-view>
 
         <div class="footer">
-          © 2026 粤财信托 · Powered by Antigravity
+          © 2026 粤财信托
         </div>
       </div>
     </main>

@@ -9,74 +9,175 @@
           <p class="zx-page-sub">Macro-Quadrant Base Allocation · EDB → 象限定位 → 配置方案生成</p>
         </div>
       </div>
-      <button class="zx-action-btn" :disabled="loading" @click="runMacroAllocation">
-        <span v-if="loading" class="zx-spinner"></span>
-        <span v-else>🚀</span>
-        {{ loading ? '正在计算...' : '一键获取 EDB + 宏观象限底仓' }}
-      </button>
     </div>
+    
+    <!-- Main Dashboard Row Layout -->
+    <div v-if="result" class="flex flex-col xl:flex-row gap-6 items-stretch fade-in mb-6">
+      
+      <!-- Section 1: 宏观特征引擎 (EDB) -->
+      <section class="flex-[2] bg-[#f1f4f6] p-6 rounded-xl border border-[#eaeff1] flex flex-col justify-between">
+        <div class="flex items-center gap-3 mb-6">
+          <span class="material-symbols-outlined text-[#737c7f]" data-icon="query_stats">query_stats</span>
+          <h2 class="text-sm font-bold tracking-widest text-[#2b3437] uppercase whitespace-nowrap">宏观特征引擎 (EDB)</h2>
+        </div>
+        <div class="flex items-center gap-8 mb-8">
+          <div class="flex-none">
+            <div class="flex items-baseline gap-3">
+              <span class="text-6xl font-black tracking-tighter" :class="result.edb_data.composite_score < 0 ? 'text-[#9f403d]' : 'text-[#46607f]'">{{ (result.edb_data.composite_score || 0).toFixed(3) }}</span>
+              <span class="px-3 py-1 bg-[#dbe4e7] text-[#586064] text-[10px] font-black tracking-[0.2em] uppercase rounded-full">{{ result.edb_data.market_state }}</span>
+            </div>
+            <p class="text-[9px] text-[#737c7f] tracking-widest uppercase font-bold mt-1">INDICATOR STRENGTH 评分强度</p>
+          </div>
 
-    <!-- ═══ EDB + 象限信息 ═══ -->
-    <div v-if="result" class="zx-info-row fade-in">
-      <!-- EDB 宏观引擎 -->
-      <div class="zx-card zx-card-edb">
-        <div class="zx-card-title">📡 宏观特征引擎 (EDB)</div>
-        <div class="zx-metric">
-          <span class="zx-label">市场状态</span>
-          <span class="zx-value zx-highlight">{{ result.edb_data.market_state }}</span>
-        </div>
-        <div class="zx-metric">
-          <span class="zx-label">综合得分</span>
-          <span class="zx-value">{{ result.edb_data.composite_score }}</span>
-        </div>
-        <div class="zx-sub-metrics">
-          <div>宏观: {{ result.edb_data.macro_total }}</div>
-          <div>估值: {{ result.edb_data.valuation_total }}</div>
-          <div>风险: {{ result.edb_data.risk_total }}</div>
-        </div>
-      </div>
-
-      <!-- 宏观象限定位 -->
-      <div class="zx-card zx-card-quadrant">
-        <div class="zx-card-title">🧭 宏观象限定位</div>
-        <div class="zx-quadrant-header">
-          <div class="zx-quadrant-icon" :style="{ background: qColors[result.quadrant.current]?.bg || '#f3f4f5' }">
-            {{ qColors[result.quadrant.current]?.icon || '🧭' }}
-          </div>
-          <div>
-            <div class="zx-quadrant-label">{{ result.quadrant.label }}</div>
-            <div class="zx-quadrant-desc">{{ result.quadrant.description }}</div>
-          </div>
-        </div>
-        <div class="zx-asset-signals">
-          <div class="zx-signal-good">
-            <div class="zx-signal-title">利好</div>
-            <div class="zx-signal-value">{{ (result.quadrant.best_assets || []).join(', ') }}</div>
-          </div>
-          <div class="zx-signal-bad">
-            <div class="zx-signal-title">承压</div>
-            <div class="zx-signal-value">{{ (result.quadrant.worst_assets || []).join(', ') }}</div>
+          <div class="flex-grow grid grid-cols-1 gap-4 border-l border-[#dbe4e7]/30 pl-8">
+            <div class="space-y-2">
+              <div class="flex justify-between items-end">
+                <p class="text-[9px] uppercase tracking-[0.15em] text-[#737c7f] font-bold">Macro 宏观因子</p>
+                <p class="text-sm font-black text-[#2b3437]">{{ (result.edb_data.macro_total || 0).toFixed(3) }}</p>
+              </div>
+              <div class="w-full h-1 bg-[#dbe4e7] overflow-hidden rounded-full flex" :class="(result.edb_data.macro_total || 0) < 0 ? 'justify-end' : ''">
+                <div class="h-full" :class="(result.edb_data.macro_total || 0) < 0 ? 'bg-[#9f403d]' : 'bg-[#46607f]'" :style="{ width: Math.min(Math.abs(result.edb_data.macro_total || 0) * 50, 100) + '%' }"></div>
+              </div>
+            </div>
+            
+            <div class="space-y-2">
+              <div class="flex justify-between items-end">
+                <p class="text-[9px] uppercase tracking-[0.15em] text-[#737c7f] font-bold">Valuation 估值水平</p>
+                <p class="text-sm font-black text-[#2b3437]">{{ (result.edb_data.valuation_total || 0).toFixed(3) }}</p>
+              </div>
+              <div class="w-full h-1 bg-[#dbe4e7] overflow-hidden rounded-full flex" :class="(result.edb_data.valuation_total || 0) < 0 ? 'justify-end' : ''">
+                <div class="h-full" :class="(result.edb_data.valuation_total || 0) < 0 ? 'bg-[#9f403d]' : 'bg-[#46607f]/60'" :style="{ width: Math.min(Math.abs(result.edb_data.valuation_total || 0) * 50, 100) + '%' }"></div>
+              </div>
+            </div>
+            
+            <div class="space-y-2">
+              <div class="flex justify-between items-end">
+                <p class="text-[9px] uppercase tracking-[0.15em] text-[#737c7f] font-bold">Risk 风险偏好</p>
+                <p class="text-sm font-black" :class="(result.edb_data.risk_total || 0) < 0 ? 'text-[#9f403d]' : 'text-[#2b3437]'">{{ (result.edb_data.risk_total || 0).toFixed(3) }}</p>
+              </div>
+              <div class="w-full h-1 bg-[#dbe4e7] overflow-hidden rounded-full flex" :class="(result.edb_data.risk_total || 0) < 0 ? 'justify-end' : ''">
+                <div class="h-full" :class="(result.edb_data.risk_total || 0) < 0 ? 'bg-[#9f403d]' : 'bg-[#46607f]/40'" :style="{ width: Math.min(Math.abs(result.edb_data.risk_total || 0) * 50, 100) + '%' }"></div>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="zx-markov">
-          Markov: <b>{{ result.quadrant.markov_regime }}</b>
-          ({{ ((result.quadrant.markov_confidence || 0) * 100).toFixed(0) }}%)
-        </div>
-      </div>
-
-      <!-- 情景类型提示 -->
-      <div class="zx-card zx-card-scenario-type">
-        <div class="zx-card-title">📋 配置模式</div>
-        <div class="zx-scenario-badge" :class="result.scenario_type === 'A' ? 'badge-a' : 'badge-b'">
-          情景 {{ result.scenario_type }}
-        </div>
-        <p class="zx-scenario-explain" v-if="result.scenario_type === 'A'">
-          波动率约束可满足目标收益，已生成 <b>3 套配置方案</b>（进取/稳健/防守）。
+        <p class="text-[9px] text-[#737c7f] leading-relaxed italic opacity-60">
+            * 引擎实时捕捉全球宏观经济变动、货币政策及市场风险溢价。
         </p>
-        <p class="zx-scenario-explain" v-else>
-          波动率无法覆盖目标收益，已降级为 <b>1 套稳健配置</b>，以波动率为绝对锚点。
-        </p>
-      </div>
+      </section>
+
+      <!-- Section 2: 宏观象限定位 -->
+      <section class="flex-[2] bg-[#ffffff] p-6 rounded-xl border border-[#f1f4f6] shadow-sm flex flex-col justify-between">
+        <div class="flex items-center gap-3 mb-6">
+          <span class="material-symbols-outlined text-[#46607f] text-xl" data-icon="explore">explore</span>
+          <h2 class="text-sm font-bold tracking-widest text-[#2b3437] uppercase whitespace-nowrap">宏观象限定位</h2>
+        </div>
+        
+        <div class="bg-[#46607f]/5 px-6 py-4 rounded-xl border border-[#46607f]/10 mb-6">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-4">
+              <span class="material-symbols-outlined text-[#46607f] text-3xl" data-icon="potted_plant">{{ qColors[result.quadrant.current]?.icon || 'potted_plant' }}</span>
+              <div>
+                <h3 class="text-xl font-black text-[#46607f] tracking-tight">{{ result.quadrant.label }}</h3>
+                <p class="text-[9px] text-[#46607f]/60 font-bold tracking-[0.3em] uppercase mt-0.5">{{ result.quadrant.description }}</p>
+              </div>
+            </div>
+            <div class="text-[9px] font-bold text-[#46607f]/80 bg-[#46607f]/5 px-3 py-1.5 rounded border border-[#46607f]/5 uppercase tracking-widest hidden sm:block">
+              {{ result.quadrant.markov_regime || 'Current Regime' }}
+            </div>
+          </div>
+        </div>
+        
+        <div class="space-y-4">
+          <!-- Positive Assets -->
+          <div class="flex items-center gap-4" v-if="result.quadrant.best_assets && result.quadrant.best_assets.length > 0">
+            <div class="flex items-center gap-2 w-28 flex-none">
+              <span class="w-2 h-2 rounded-full bg-[#46607f]"></span>
+              <span class="text-[9px] font-black tracking-widest text-[#2b3437] uppercase">利好 POSITIVE</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 bg-[#f1f4f6]/40 px-3 py-2.5 rounded-lg border border-[#eaeff1] flex-grow">
+              <template v-for="(asset, index) in result.quadrant.best_assets" :key="asset">
+                <div class="flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-[#46607f] text-base" data-icon="trending_up">trending_up</span>
+                  <span class="text-xs font-bold text-[#2b3437]">{{ asset }}</span>
+                </div>
+                <div class="w-px h-3 bg-[#dbe4e7]/50" v-if="index < result.quadrant.best_assets.length - 1"></div>
+              </template>
+            </div>
+          </div>
+          
+          <!-- Pressure Assets -->
+          <div class="flex items-center gap-4" v-if="result.quadrant.worst_assets && result.quadrant.worst_assets.length > 0">
+            <div class="flex items-center gap-2 w-28 flex-none">
+              <span class="w-2 h-2 rounded-full bg-[#9f403d]"></span>
+              <span class="text-[9px] font-black tracking-widest text-[#2b3437] uppercase">承压 PRESSURE</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-3 bg-[#f1f4f6]/40 px-3 py-2.5 rounded-lg border border-[#eaeff1] flex-grow">
+              <template v-for="(asset, index) in result.quadrant.worst_assets" :key="asset">
+                <div class="flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-[#9f403d] text-base" data-icon="trending_down">trending_down</span>
+                  <span class="text-xs font-bold text-[#2b3437]">{{ asset }}</span>
+                </div>
+                <div class="w-px h-3 bg-[#dbe4e7]/50" v-if="index < result.quadrant.worst_assets.length - 1"></div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 3: 配置模式 -->
+      <section class="flex-1 bg-[#e3e9ec] p-6 rounded-xl border border-[#eaeff1] flex flex-col">
+        <div class="flex items-center gap-3 mb-4">
+          <span class="material-symbols-outlined text-[#737c7f]" data-icon="tune">tune</span>
+          <h2 class="text-sm font-bold tracking-widest text-[#2b3437] uppercase whitespace-nowrap">配置模式</h2>
+        </div>
+        <div class="bg-[#46607f]/10 px-4 py-3 rounded-lg flex gap-3 mb-6">
+          <span class="material-symbols-outlined text-[#46607f] text-sm flex-none" data-icon="info">info</span>
+          <p class="text-[10px] font-bold text-[#46607f] leading-tight">
+            根据风险约束与收益目标匹配配置策略。
+          </p>
+        </div>
+        
+        <div class="flex flex-col gap-4 flex-grow">
+          <!-- Scenario A - Highlighted -->
+          <div v-if="result.scenario_type === 'A'" class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#46607f] ring-2 ring-[#46607f]/5">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[9px] font-black text-[#46607f] tracking-[0.2em] uppercase">情景 A — 活动建议</span>
+              <span class="material-symbols-outlined text-[#46607f] text-lg" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+            </div>
+            <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
+              波动率约束可满足目标收益，已生成 3 套平滑配置方案（进取/稳健/防守）。
+            </p>
+          </div>
+          
+          <!-- Scenario B - Highlighted -->
+          <div v-else class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#9f403d] ring-2 ring-[#9f403d]/5">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[9px] font-black text-[#9f403d] tracking-[0.2em] uppercase">情景 B — 自动防御</span>
+              <span class="material-symbols-outlined text-[#9f403d] text-lg" data-icon="warning_amber" style="font-variation-settings: 'FILL' 1;">warning_amber</span>
+            </div>
+            <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
+              波动率无法覆盖高收益目标。已降级为 1 套稳健配置，以波动率为锚点。
+            </p>
+          </div>
+
+          <!-- Inactive Scenarios (Visual only) -->
+          <div class="flex-grow flex flex-col gap-2">
+            <div v-if="result.scenario_type !== 'A'" class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 A</span>
+              <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+            </div>
+            <div v-if="result.scenario_type !== 'B'" class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 B</span>
+              <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+            </div>
+            <div class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 C</span>
+              <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- ═══ 因子传导链条 ═══ -->
@@ -86,80 +187,205 @@
         因子传导链条 (点击展开底仓生成依据)
         <span class="material-symbols-outlined ml-auto text-on-surface-variant transition-transform group-open:rotate-180">expand_more</span>
       </summary>
-      
-      <div class="zx-chain-row mt-6 pt-4 border-t border-surface-variant">
-        <div v-for="item in result.transmission_chain" :key="item.factor"
-          class="zx-chain-item"
-          :style="{ background: item.score > 0 ? '#FEF2F2' : '#F0FDF4', border: '1px solid ' + (item.score > 0 ? '#FECACA' : '#BBF7D0') }">
-          <div class="zx-chain-factor">{{ item.factor }}</div>
-          <div class="zx-chain-score" :style="{ color: item.score > 0 ? '#DC2626' : '#16A34A' }">
-            {{ item.score > 0 ? '+' : '' }}{{ item.score }}
+      <div class="mt-6 pt-6 border-t border-surface-variant flex flex-col gap-6 relative px-2 pb-4">
+        <!-- Connecting Line behind steps -->
+        <div class="absolute left-[38px] top-8 bottom-8 w-0.5 bg-[#e3e9ec] z-0"></div>
+
+        <!-- Step 1: EDB 底座 -->
+        <div class="relative z-10 flex gap-5 items-start">
+          <div class="w-14 h-14 rounded-full bg-primary-container text-primary flex items-center justify-center font-bold text-xl shrink-0 border-4 border-[#ffffff] shadow-sm">1</div>
+          <div class="flex-grow bg-[#f8f9fa] rounded-xl p-5 border border-outline-variant/20 shadow-sm">
+            <h4 class="font-bold text-[#1a1c1e] text-base mb-3 flex items-center gap-2">
+              <span class="material-symbols-outlined text-[18px]">database</span>
+              EDB 宏观多因子底座合成
+            </h4>
+            <div class="flex flex-wrap gap-4 text-sm mt-4">
+              <div class="flex flex-col bg-white px-4 py-3 rounded-lg border border-outline-variant/10 min-w-[120px] shadow-sm">
+                <span class="text-[#737c7f] text-xs mb-1">宏观经济得分</span>
+                <span class="font-bold text-[#1a1c1e] text-lg">{{ result.edb_data.macro_total }}</span>
+              </div>
+              <div class="flex flex-col bg-white px-4 py-3 rounded-lg border border-outline-variant/10 min-w-[120px] shadow-sm">
+                <span class="text-[#737c7f] text-xs mb-1">估值水位得分</span>
+                <span class="font-bold text-[#1a1c1e] text-lg">{{ result.edb_data.valuation_total }}</span>
+              </div>
+              <div class="flex flex-col bg-white px-4 py-3 rounded-lg border border-outline-variant/10 min-w-[120px] shadow-sm">
+                <span class="text-[#737c7f] text-xs mb-1">风险动能得分</span>
+                <span class="font-bold text-[#1a1c1e] text-lg">{{ result.edb_data.risk_total }}</span>
+              </div>
+              <div class="flex items-center ml-2 text-primary font-bold bg-primary-container/30 px-4 rounded-lg">
+                <span class="material-symbols-outlined mr-2">arrow_forward</span>
+                综合判定: <span class="ml-2 text-[#001529]">{{ result.edb_data.composite_score }} ({{ result.edb_data.market_state }})</span>
+              </div>
+            </div>
           </div>
-          <div class="zx-chain-modifier">×{{ item.regime_modifier }}</div>
         </div>
+
+        <!-- Step 2: 宏观动能解码 -->
+        <div class="relative z-10 flex gap-5 items-start">
+          <div class="w-14 h-14 rounded-full bg-primary-container text-primary flex items-center justify-center font-bold text-xl shrink-0 border-4 border-[#ffffff] shadow-sm">2</div>
+          <div class="flex-grow bg-[#f8f9fa] rounded-xl p-5 border border-outline-variant/20 shadow-sm">
+            <h4 class="font-bold text-[#1a1c1e] text-base mb-3 flex items-center gap-2">
+              <span class="material-symbols-outlined text-[18px]">hub</span>
+              六大基本面因子解码
+            </h4>
+            <div class="flex flex-wrap gap-3 mt-4">
+              <div v-for="item in result.transmission_chain" :key="item.factor"
+                class="flex flex-col items-center justify-center p-3 rounded-lg min-w-[110px] shadow-sm transition-transform hover:-translate-y-1"
+                :style="{ background: item.score > 0 ? '#FEF2F2' : '#F0FDF4', border: '1px solid ' + (item.score > 0 ? '#FECACA' : '#BBF7D0') }">
+                <span class="text-xs font-semibold" style="color:#191c1d">{{ item.factor }}</span>
+                <span class="text-xl font-bold mt-1" :style="{ color: item.score > 0 ? '#DC2626' : '#16A34A' }">
+                  {{ item.score > 0 ? '+' : '' }}{{ item.score }}
+                </span>
+                <span class="text-[10px] text-[#94a3b8] mt-1 bg-white/60 px-2 py-0.5 rounded-full" v-if="item.regime_modifier !== 1">HMM 修正: ×{{ item.regime_modifier }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 3: 象限映射及交叉验证 -->
+        <div class="relative z-10 flex gap-5 items-start">
+          <div class="w-14 h-14 rounded-full bg-primary-container text-primary flex items-center justify-center font-bold text-xl shrink-0 border-4 border-[#ffffff] shadow-sm">3</div>
+          <div class="flex-grow bg-[#f8f9fa] rounded-xl p-5 border border-outline-variant/20 shadow-sm">
+            <h4 class="font-bold text-[#1a1c1e] text-base mb-3 flex items-center gap-2">
+              <span class="material-symbols-outlined text-[18px]">explore</span>
+              美林象限映射与隐马尔可夫验证
+            </h4>
+            <div class="flex flex-col gap-3 text-sm mt-4">
+              <div class="flex items-center gap-3">
+                <span class="px-3 py-1 bg-surface-container rounded text-[#43474d] text-xs font-medium">算法测算定位</span>
+                <strong class="text-[#001529] text-base">{{ result.quadrant.label }}</strong>
+                <span class="text-[#74777d] text-xs ml-2">{{ result.quadrant.description }}</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span class="px-3 py-1 bg-surface-container rounded text-[#43474d] text-xs font-medium">HMM 量价验证</span>
+                <strong class="text-primary text-base">{{ result.quadrant.markov_regime }}</strong>
+                <span class="text-primary text-xs ml-2 px-2 py-0.5 bg-primary-container/50 rounded-full font-bold">可信度: {{ ((result.quadrant.markov_confidence || 0) * 100).toFixed(1) }}%</span>
+              </div>
+              <div class="mt-3 flex gap-6 p-4 bg-white rounded-lg border border-outline-variant/20 shadow-sm">
+                <div class="flex-1">
+                  <div class="text-xs text-[#74777d] mb-2 font-medium">利好大类资产 (做多推荐)</div>
+                  <div class="font-bold text-[#10B981] text-[15px] leading-relaxed">{{ (result.quadrant.best_assets || []).join('、') }}</div>
+                </div>
+                <!-- Line separator -->
+                <div class="w-px bg-outline-variant/20 self-stretch"></div>
+                <div class="flex-1">
+                  <div class="text-xs text-[#74777d] mb-2 font-medium">承压大类资产 (规避或低配)</div>
+                  <div class="font-bold text-[#EF4444] text-[15px] leading-relaxed">{{ (result.quadrant.worst_assets || []).join('、') }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 4: 极值求解约束 -->
+        <div class="relative z-10 flex gap-5 items-start">
+          <div class="w-14 h-14 rounded-full bg-[#1a1c1e] text-white flex items-center justify-center font-bold text-xl shrink-0 border-4 border-[#ffffff] shadow-md">4</div>
+          <div class="flex-grow bg-[#f8f9fa] rounded-xl p-5 border border-outline-variant/20 shadow-sm">
+            <h4 class="font-bold text-[#1a1c1e] text-base mb-3 flex items-center gap-2">
+              <span class="material-symbols-outlined text-[18px]">tune</span>
+              最小波动率约束优化 (Min-Vol Engine)
+            </h4>
+            <div class="text-sm text-[#43474d] mb-4 leading-relaxed">
+              根据资金侧预期与市场真实环境，基于《核心146池》协方差矩阵执行二次规划优化。
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="p-4 bg-white rounded-lg border-l-4 border-l-primary shadow-sm hover:shadow transition-shadow">
+                <div class="text-xs text-[#737c7f] mb-2 font-medium uppercase tracking-wider">目标函数</div>
+                <div class="font-bold text-[#1a1c1e] leading-snug">锁定预期目标收益率界限<br/><span class="text-primary font-black">求解组合全局方差最小化权重</span></div>
+              </div>
+              <div class="p-4 bg-white rounded-lg border-l-4 shadow-sm" :class="result.scenario_type === 'A' ? 'border-l-[#10B981]' : 'border-l-[#F59E0B]'">
+                <div class="text-xs text-[#737c7f] mb-2 font-medium uppercase tracking-wider">引擎判定结论</div>
+                <div class="font-bold text-[#1a1c1e] leading-snug" v-if="result.scenario_type === 'A'">
+                  <span class="text-[#10B981] mr-1">■ 情景 A:</span>
+                  当前波动约束下可实现收益要求，平台已生成进取、稳健、防守三套平滑方案。
+                </div>
+                <div class="font-bold text-[#1a1c1e] leading-snug" v-else>
+                  <span class="text-[#F59E0B] mr-1">■ 情景 B:</span>
+                  当前波动率难以完全覆盖预设的高收益目标，引擎已自动降级防守，仅产出单一稳健解。
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </details>
 
-    <!-- ═══ KPI 卡片组 (每个方案一列) ═══ -->
-    <div v-if="result && result.scenarios" class="zx-scenarios-grid fade-in">
+    <!-- ═══ 资产配置方案对比组 (每个方案一列) ═══ -->
+    <section v-if="result && result.scenarios" class="grid grid-cols-1 md:grid-cols-3 gap-8 fade-in mb-8">
+      <!-- Dynamic scenario rendering -->
       <div v-for="(sc, idx) in result.scenarios" :key="sc.name"
-        class="zx-scenario-card"
-        :class="{ 'zx-scenario-highlight': idx === activeScenarioIndex }"
-        style="cursor:pointer;"
-        @click="activeScenarioIndex = idx">
-        <!-- 标记 -->
-        <div class="zx-scenario-tag" v-if="idx === activeScenarioIndex">🌟 当前选中</div>
+           class="flex flex-col bg-[#f1f4f6] rounded-xl overflow-hidden relative transition-all duration-300"
+           :class="{ 'ring-2 ring-[#46607f] shadow-lg scale-[1.02]': idx === activeScenarioIndex }"
+           style="cursor:pointer;"
+           @click="activeScenarioIndex = idx">
+        
+        <!-- Highlight Indicator -->
+        <div class="absolute top-0 left-0 w-full h-1 bg-[#46607f]" v-if="idx === activeScenarioIndex"></div>
 
-        <h3 class="zx-scenario-name">{{ sc.name }}</h3>
-
-        <!-- KPI 卡片 -->
-        <div class="zx-kpi-grid">
-          <div class="zx-kpi-item">
-            <div class="zx-kpi-label">年化收益率</div>
-            <div class="zx-kpi-value" style="color:#DC2626;">{{ sc.kpi.ann_return_pct }}%</div>
+        <div class="p-8 pb-4 flex flex-col gap-6">
+          <div class="flex justify-between items-start">
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] tracking-widest uppercase text-[#586064] flex items-center gap-1">
+                Model Portfolio
+                <span v-if="sc.kpi._source !== 'wind'" class="text-[#9f403d] font-bold tracking-widest bg-[#fe8983]/20 px-1.5 py-0.5 rounded-full inline-block ml-2 text-[8px]" title="Wind不可用，波动率/回撤/夏普显示为N/A">⚠️ Wind数据缺失</span>
+              </span>
+              <h2 class="text-2xl font-bold tracking-tight text-[#2b3437]">
+                <span class="text-sm mr-1" v-if="idx === activeScenarioIndex">🌟</span>{{ sc.name }}
+              </h2>
+            </div>
+            
+            <span v-if="sc.name.includes('进取')" class="bg-[#46607f] text-[#f5f7ff] text-[10px] px-2 py-1 rounded-full font-bold tracking-widest uppercase">AGGRESSIVE</span>
+            <span v-else-if="sc.name.includes('稳健')" class="bg-[#d1e4fb] text-[#415366] text-[10px] px-2 py-1 rounded-full font-bold tracking-widest uppercase border border-[#abb3b7]/20">BALANCE</span>
+            <span v-else class="bg-[#dbe4e7] text-[#586064] text-[10px] px-2 py-1 rounded-full font-bold tracking-widest uppercase">CONSERVATIVE</span>
           </div>
-          <div class="zx-kpi-item">
-            <div class="zx-kpi-label">年化波动率</div>
-            <div class="zx-kpi-value">{{ sc.kpi.ann_vol_pct }}%</div>
-          </div>
-          <div class="zx-kpi-item">
-            <div class="zx-kpi-label">最大回撤</div>
-            <div class="zx-kpi-value" style="color:#16A34A;">{{ sc.kpi.max_drawdown_pct }}%</div>
-          </div>
-          <div class="zx-kpi-item">
-            <div class="zx-kpi-label">夏普比率</div>
-            <div class="zx-kpi-value">{{ sc.kpi.sharpe }}</div>
+          
+          <div class="grid grid-cols-2 gap-y-8 mt-4">
+            <div class="flex flex-col">
+              <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">预期年化收益率</span>
+              <span class="text-3xl font-bold tracking-tighter text-[#DC2626]">{{ sc.kpi.ann_return_pct }}%</span>
+            </div>
+            <div class="flex flex-col">
+              <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">年化波动率</span>
+              <span class="text-3xl font-bold tracking-tighter text-[#2b3437]">{{ sc.kpi.ann_vol_pct === 'N/A' ? 'N/A' : sc.kpi.ann_vol_pct + '%' }}</span>
+            </div>
+            <div class="flex flex-col">
+              <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">最大回撤</span>
+              <span class="text-3xl font-bold tracking-tighter text-[#16A34A]">{{ sc.kpi.max_drawdown_pct === 'N/A' ? 'N/A' : sc.kpi.max_drawdown_pct + '%' }}</span>
+            </div>
+            <div class="flex flex-col">
+              <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">夏普比率</span>
+              <span class="text-3xl font-bold tracking-tighter text-[#2b3437]">{{ sc.kpi.sharpe === 'N/A' ? 'N/A' : sc.kpi.sharpe }}</span>
+            </div>
           </div>
         </div>
-
-        <!-- 资产明细表格 -->
-        <div class="zx-alloc-table-wrap">
-          <table class="zx-alloc-table">
-            <thead>
-              <tr>
-                <th>基金名称</th>
-                <th>类别</th>
-                <th style="text-align:right;">权重</th>
-                <th style="text-align:right;">金额 (元)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="alloc in sc.allocations.filter(a => a.weight_pct > 0.1)" :key="alloc.code">
-                <td>
-                  <div class="zx-fund-name">{{ alloc.name }}</div>
-                  <div class="zx-fund-code">{{ alloc.code }}</div>
-                </td>
-                <td><span class="zx-cat-tag">{{ alloc.category }}</span></td>
-                <td style="text-align:right;font-weight:700;color:#001529;">{{ alloc.weight_pct }}%</td>
-                <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#43474d;">
-                  ¥{{ Number(alloc.amount).toLocaleString() }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        
+        <div class="bg-[#ffffff] m-4 rounded-lg p-6 flex flex-col gap-4 overflow-hidden">
+          <div class="flex justify-between items-center border-b border-[#e3e9ec] pb-2">
+            <span class="text-[10px] font-bold tracking-widest uppercase text-[#586064]">
+              底层基金明细 
+              <span class="text-[#46607f]">({{ sc.allocations.filter(a => a.weight_pct > 0.1).length }}只)</span>
+            </span>
+            <span class="text-[10px] font-bold tracking-widest uppercase text-[#586064]">权重 / 金额</span>
+          </div>
+          <ul class="flex flex-col gap-4 max-h-[180px] overflow-y-auto pr-2 custom-scrollbar">
+            <li class="flex justify-between items-center" v-for="alloc in sc.allocations.filter(a => a.weight_pct > 0.1)" :key="alloc.code">
+              <div class="flex flex-col w-3/5">
+                <span class="text-sm font-semibold text-[#2b3437] truncate" :title="alloc.name">{{ alloc.name }}</span>
+                <div class="flex items-center gap-2 mt-0.5">
+                  <span class="text-[10px] text-[#737c7f] tracking-wider uppercase truncate">{{ alloc.category }}</span>
+                  <span class="text-[9px] text-[#737c7f]/60 font-mono">{{ alloc.code }}</span>
+                </div>
+              </div>
+              <div class="text-right w-2/5 flex flex-col items-end">
+                <div class="text-sm font-bold text-[#2b3437]">{{ alloc.weight_pct }}%</div>
+                <div class="text-[10px] text-[#737c7f] font-mono">¥{{ Number(alloc.amount).toLocaleString() }}</div>
+              </div>
+            </li>
+          </ul>
         </div>
       </div>
-    </div>
+    </section>
 
     <!-- ═══ 深度基资料展示 (核心精选 10 支) ═══ -->
     <div v-if="recommendedProfiles.length > 0" class="zx-profiles-section fade-in">
@@ -170,7 +396,7 @@
         </div>
         
         <div class="zx-profiles-grid">
-          <div v-for="profile in recommendedProfiles" :key="profile.code" class="zx-profile-card">
+          <div v-for="profile in recommendedProfiles" :key="profile.code" class="zx-profile-card hover:-translate-y-1 hover:shadow-xl transition-all duration-300 cursor-pointer" @click="openFundPage(profile.code)" title="点击前往天天基金网查看此基金详情">
             <div class="zxp-header">
               <div class="zxp-title">
                 <div class="zxp-fund-name" :title="profile.name">{{ profile.name }}</div>
@@ -229,11 +455,68 @@
       </div>
     </div>
 
-    <!-- 空状态 -->
-    <div v-if="!result && !loading" class="zx-empty-state">
-      <div class="zx-empty-icon">🧭</div>
-      <h2>等待宏观象限检索</h2>
-      <p>点击上方按钮，系统将自动从 EDB 获取宏观因子数据，定位当前经济周期象限，并生成配置方案。</p>
+    <!-- 空状态与主引擎入口 -->
+    <div v-if="!result" class="flex-grow flex flex-col items-center justify-center min-h-[600px] relative overflow-hidden fade-in">
+      <!-- Background Tonal Shifts -->
+      <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] rounded-full blur-[120px] pointer-events-none" style="background: rgba(209, 228, 255, 0.15);"></div>
+      <!-- Centered Content Wrapper -->
+      <div class="relative z-10 flex flex-col items-center max-w-2xl text-center">
+        <!-- Abstract Factor Visual -->
+        <div class="mb-14 relative w-64 h-48 flex items-center justify-center visual-float">
+          <div class="grid grid-cols-3 gap-x-8 gap-y-6">
+            <span class="text-3xl font-extrabold tracking-tighter" style="color: #B8860B; opacity: 0.9;">GDP</span>
+            <span class="text-xl font-light self-end" style="color: #78866B; opacity: 0.7;">CPI</span>
+            <span class="text-2xl font-semibold" style="color: #5F9EA0; opacity: 0.8;">IR</span>
+            <span class="text-lg font-medium" style="color: #BC8F8F; opacity: 0.6;">FX</span>
+            <span class="text-4xl font-bold tracking-tighter" style="color: #1a1c1e; opacity: 0.9;">PMI</span>
+            <span class="text-xl font-light self-center" style="color: #778899; opacity: 0.7;">M2</span>
+            <span class="text-sm font-bold uppercase" style="color: #A0522D; opacity: 0.5;">PPI</span>
+            <span class="text-2xl font-light" style="color: #556B2F; opacity: 0.8;">NFP</span>
+            <span class="text-lg font-semibold" style="color: #483D8B; opacity: 0.6;">VIX</span>
+          </div>
+          <!-- Decorative surrounding elements -->
+          <div class="absolute inset-0 -m-6 border rounded-3xl" style="border-color: rgba(115, 124, 127, 0.05);"></div>
+          <div class="absolute inset-4 border rounded-2xl" style="border-color: rgba(115, 124, 127, 0.1);"></div>
+        </div>
+        <!-- Typography Stack -->
+        <div class="space-y-8 flex flex-col items-center">
+          <!-- Action Button replaces the Heading Text -->
+          <button @click="runMacroAllocation" :disabled="loading" class="px-12 text-[#f5f7ff] rounded-2xl shadow-2xl transition-all active:scale-[0.98] group relative overflow-hidden flex flex-col items-center justify-center min-w-[520px] py-10 border border-white/5 bg-gradient-to-br from-[#1e3a8a] to-[#172554] disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none" style="box-shadow: 0 25px 50px -12px rgba(30, 58, 138, 0.35);">
+            <div class="relative z-10 flex flex-col items-center gap-4">
+              <!-- All-Weather Season Icons -->
+              <div class="flex items-center gap-6 opacity-90">
+                <span class="material-symbols-outlined text-lg text-emerald-400/70" data-icon="potted_plant">potted_plant</span>
+                <span class="material-symbols-outlined text-lg text-amber-400/70" data-icon="wb_sunny">wb_sunny</span>
+                <span class="material-symbols-outlined text-lg text-orange-400/70" data-icon="eco">eco</span>
+                <span class="material-symbols-outlined text-lg text-blue-300/70" data-icon="ac_unit">ac_unit</span>
+              </div>
+              <span class="text-3xl md:text-3xl tracking-tight leading-tight uppercase font-bold flex items-center gap-4">
+                <span v-if="loading" class="zx-spinner" style="border-width: 3px; width: 26px; height: 26px; border-top-color: white; border-right-color: rgba(255,255,255,0.2); border-bottom-color: rgba(255,255,255,0.2); border-left-color: rgba(255,255,255,0.2);"></span>
+                {{ loading ? '引擎运转中...' : '全天候宏观象限配置引擎' }}
+              </span>
+            </div>
+            <div class="absolute inset-0 bg-gradient-to-tr from-black/20 to-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
+          <p class="text-lg text-[#586064] font-light leading-relaxed max-w-xl mx-auto opacity-80" v-if="!loading">
+            点击上方引擎，系统将自动从 <span class="text-[#2b3437] font-medium">EDB</span> 获取宏观因子数据，定位当前经济周期象限，并生成配置方案。
+          </p>
+        </div>
+        <!-- Terminal-style Loading Indicators -->
+        <div v-if="loading" class="mt-12 flex items-center gap-10 fade-in">
+          <div class="flex items-center gap-3">
+            <div class="w-1.5 h-1.5 rounded-full bg-[#1a1c1e] animate-pulse"></div>
+            <span class="text-[10px] uppercase tracking-[0.2em] font-bold text-[#586064]/80">Data Connectivity</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="w-1.5 h-1.5 rounded-full bg-[#1a1c1e] animate-pulse" style="animation-delay: 0.2s"></div>
+            <span class="text-[10px] uppercase tracking-[0.2em] font-bold text-[#586064]/80">Quadrant Analysis</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <div class="w-1.5 h-1.5 rounded-full bg-[#1a1c1e] animate-pulse" style="animation-delay: 0.4s"></div>
+            <span class="text-[10px] uppercase tracking-[0.2em] font-bold text-[#586064]/80">Strategy Synthesis</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Error -->
@@ -296,9 +579,20 @@ async function runMacroAllocation() {
     loading.value = false
   }
 }
+
+function openFundPage(code) {
+  if (!code) return;
+  const match = code.match(/\d{6}/);
+  if (match) {
+    window.open(`https://fund.eastmoney.com/${match[0]}.html`, '_blank');
+  }
+}
 </script>
 
 <style scoped>
+.material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+}
 .zx-macro-page { max-width: 100%; }
 
 /* ─── Header ─── */
@@ -337,7 +631,7 @@ async function runMacroAllocation() {
 }
 .zx-action-btn {
   padding: 12px 28px;
-  background: #001529;
+  background: #1e3a8a;
   color: #ffffff;
   border: none;
   border-radius: 10px;
@@ -349,7 +643,7 @@ async function runMacroAllocation() {
   align-items: center;
   gap: 8px;
   font-family: 'Manrope', sans-serif;
-  box-shadow: 0 4px 14px rgba(0,21,41,0.2);
+  box-shadow: 0 4px 14px rgba(30,58,138,0.3);
 }
 .zx-action-btn:hover:not(:disabled) { opacity: 0.9; }
 .zx-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -586,24 +880,13 @@ async function runMacroAllocation() {
   font-weight: 600;
 }
 
-/* ─── Empty State ─── */
-.zx-empty-state {
-  text-align: center;
-  padding: 80px 40px;
-  color: #74777d;
+/* ─── Empty State replaced by main engine ─── */
+.visual-float {
+  animation: float 6s ease-in-out infinite;
 }
-.zx-empty-icon { font-size: 64px; margin-bottom: 16px; }
-.zx-empty-state h2 {
-  font-size: 22px;
-  font-weight: 700;
-  color: #191c1d;
-  margin-bottom: 8px;
-}
-.zx-empty-state p {
-  font-size: 14px;
-  max-width: 480px;
-  margin: 0 auto;
-  line-height: 1.6;
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
 }
 
 .zx-error {
@@ -635,8 +918,11 @@ async function runMacroAllocation() {
 }
 .zx-profiles-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
+}
+@media (max-width: 1400px) {
+  .zx-profiles-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 }
 .zx-profile-card {
   background: #f8f9fa;
@@ -697,6 +983,49 @@ async function runMacroAllocation() {
   font-family: 'Inter', sans-serif;
 }
 .zxp-good { color: #DC2626 !important; font-weight: 600; }
+
+/* ── 数据来源标注 ── */
+.zx-kpi-source {
+  margin-top: 8px;
+  text-align: center;
+}
+.zx-source-badge {
+  display: inline-block;
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.zx-source-wind {
+  background: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
+}
+.zx-source-na {
+  background: #FEF3C7;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+/* ── 自定义滚动条 ── */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #dbe4e7;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #abb3b7;
+}
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #dbe4e7 transparent;
+}
 
 .fade-in { animation: fadeIn 0.4s ease-out; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }

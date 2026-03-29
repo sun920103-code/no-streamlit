@@ -268,39 +268,45 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     # 载入基金池
     fund_pool = _load_fund_pool()
 
-    # 判断风险约束下是否能"基本"摸到用户的收益目标 (允许20%相对容差或至少达到绝对值)
+    # 判断风险约束下是否能"基本"摸到用户的收益目标 (允许30%相对容差)
     # 如果 user target 很高，但 max_vol 压得很死，base_ret 远远达不到目标，进入情景B
-    can_achieve = base_ret >= target_ret_decimal * 0.8  
+    # 同时如果因为激进推高而导致波动率强行突破用户配置的红线，亦判定为失效，强制降级
+    can_achieve = (base_ret >= target_ret_decimal * 0.70) and (base_vol <= max_vol_decimal * 1.05 + 0.001)
 
     scenarios = []
 
     if can_achieve:
-        # 情景 A: 生成 3 套方案
-        # 为保持收益与波动率对等缩放，进取上限1.2, 防守0.8
-        for scenario_name, vol_adj, ret_adj in [("进取配置", 1.2, 1.2), ("稳健配置", 1.0, 1.0), ("防守配置", 0.8, 0.8)]:
+        # 情景 A: 生成 3 套方案 (均为最小波动率约束优化)
+        # 进取: 锁定 target_ret × 1.2 的收益率，求最小波动率
+        # 稳健: 锁定 target_ret 的收益率，求最小波动率
+        # 防守: 锁定 target_ret × 0.8 的收益率，求最小波动率
+        # max_vol 为所有方案共用的硬性红线
+        for scenario_name, ret_adj in [("进取配置", 1.2), ("稳健配置", 1.0), ("防守配置", 0.8)]:
             sc_target_ret = target_ret_decimal * ret_adj
-            sc_max_vol = max_vol_decimal * vol_adj
             
-            # 为当前情景独立求解 HRP 权重
+            # 为当前情景独立求解最小波动率权重
             rp_result = _frp.optimize_factor_risk_parity(
                 factor_scores=factor_scores_6,
-                max_volatility=sc_max_vol,
+                max_volatility=max_vol_decimal,
                 target_return=sc_target_ret,
             )
             sc_base_weights = rp_result.get("target_weights", {})
-            sc_estimated_vol = rp_result.get("estimated_volatility", sc_max_vol)
+            sc_estimated_vol = rp_result.get("estimated_volatility", max_vol_decimal)
             sc_estimated_ret = rp_result.get("estimated_return", sc_target_ret)
+            sc_risk_conc = rp_result.get("risk_concentration", 0.5)
             
             scenario = _build_scenario(
                 name=scenario_name,
                 base_weights=sc_base_weights,
                 target_ret=sc_target_ret,
-                max_vol=sc_max_vol,
+                max_vol=max_vol_decimal,
                 capital=capital_yuan,
                 fund_pool=fund_pool,
                 ret_multiplier=ret_adj,
                 hrp_estimated_vol=sc_estimated_vol,
-                hrp_estimated_ret=sc_estimated_ret
+                hrp_estimated_ret=sc_estimated_ret,
+                risk_concentration=sc_risk_conc,
+                quadrant=current_q,
             )
             scenarios.append(scenario)
     else:
@@ -315,7 +321,9 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             ret_multiplier=1.0,
             vol_anchored=True,
             hrp_estimated_vol=base_vol,
-            hrp_estimated_ret=base_ret
+            hrp_estimated_ret=base_ret,
+            risk_concentration=base_rp_result.get("risk_concentration", 0.5),
+            quadrant=current_q,
         )
         scenarios.append(scenario)
 
@@ -328,6 +336,10 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             
     wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
     
+    # 将基金档案附到每个方案，并用真实 NAV 数据覆盖 KPI
+    period_map = {"半年": 1, "1年": 1, "3年": 3}
+    period_years = period_map.get(period, 1)
+    
     for sc in scenarios:
         sc["profiles"] = []
         for alloc in sc["allocations"]:
@@ -337,6 +349,35 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             profile["_alloc_cat"] = alloc["category"]
             profile["_amount"] = alloc["amount"]
             sc["profiles"].append(profile)
+        
+        # ── 用真实 NAV 数据计算组合级 KPI (覆盖静态估算) ──
+        try:
+            real_metrics = wind_service.compute_portfolio_metrics(
+                sc["allocations"], period_years=period_years
+            )
+            if real_metrics.get("source") == "wind":
+                # 保留优化器的目标收益率作为"预期"，波动率、回撤、夏普用真实数据
+                sc["kpi"]["ann_vol_pct"] = real_metrics["ann_vol_pct"]
+                sc["kpi"]["max_drawdown_pct"] = real_metrics["max_drawdown_pct"]
+                sc["kpi"]["sharpe"] = real_metrics["sharpe"]
+                sc["kpi"]["_source"] = "wind"
+                sc["kpi"]["_data_points"] = real_metrics.get("data_points", 0)
+                sc["kpi"]["_valid_funds"] = real_metrics.get("valid_funds", 0)
+                logger.info(f"[智选] {sc['name']} KPI 已用 Wind 真实数据覆盖: "
+                           f"vol={real_metrics['ann_vol_pct']}%, dd={real_metrics['max_drawdown_pct']}%")
+            else:
+                # Wind 不可用 → 显示 N/A
+                sc["kpi"]["ann_vol_pct"] = "N/A"
+                sc["kpi"]["max_drawdown_pct"] = "N/A"
+                sc["kpi"]["sharpe"] = "N/A"
+                sc["kpi"]["_source"] = "unavailable"
+                logger.info(f"[智选] {sc['name']} Wind 不可用, KPI 波动率/回撤显示 N/A")
+        except Exception as e:
+            sc["kpi"]["ann_vol_pct"] = "N/A"
+            sc["kpi"]["max_drawdown_pct"] = "N/A"
+            sc["kpi"]["sharpe"] = "N/A"
+            sc["kpi"]["_source"] = "unavailable"
+            logger.warning(f"[智选] {sc['name']} 真实 KPI 计算异常, 显示 N/A: {e}")
     return {
         "status": "success",
         "scenario_type": "A" if can_achieve else "B",
@@ -361,13 +402,13 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             {"factor": f, "score": round(factor_scores_6.get(f, 0), 3), "regime_modifier": 1.0}
             for f in factor_scores_6
         ],
-        "defense_log": rp_result.get("defense_log", []),
-        "factor_risk_contributions": rp_result.get("factor_risk_contributions", {}),
+        "defense_log": base_rp_result.get("defense_log", []),
+        "factor_risk_contributions": base_rp_result.get("factor_risk_contributions", {}),
         "scenarios": scenarios,
     }
 
 
-def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool, ret_multiplier, vol_anchored=False, hrp_estimated_vol=0.0, hrp_estimated_ret=0.0):
+def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool, ret_multiplier, vol_anchored=False, hrp_estimated_vol=0.0, hrp_estimated_ret=0.0, risk_concentration=0.5, quadrant="recovery"):
     """构建单个配置方案 (含KPI + 基金明细表)。"""
     import random
     import json
@@ -425,11 +466,23 @@ def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool,
     # 3. 基金穿透占位符（由上层统一查 Wind）
     fund_profiles = []
 
-    # KPI 估算 (基于每个情景实际的底座杠杆推演真实特征)
-    est_return = hrp_estimated_ret if hrp_estimated_ret > 0 else (target_ret if not vol_anchored else min(target_ret, target_ret * 0.5))
-    est_vol = hrp_estimated_vol if hrp_estimated_vol > 0 else (max_vol if vol_anchored else min(max_vol, max_vol * 0.9))
+    # KPI 估算 (基于 HRP 优化器输出的真实组合指标)
+    est_return = hrp_estimated_ret if hrp_estimated_ret > 0 else target_ret
+    est_vol = hrp_estimated_vol if hrp_estimated_vol > 0 else max_vol
     est_sharpe = est_return / est_vol if est_vol > 1e-8 else 0
-    est_max_dd = -est_vol * 1.35  # 粗估：大类资产最大回撤约为年化波动的 1.35 倍
+    
+    # 动态最大回撤估算: 基于风险资产集中度 + 象限风险修正
+    # 分散化组合: 乘数约 1.2x; 集中权益: 乘数约 2.0x
+    dd_multiplier = 1.0 + risk_concentration * 1.2
+    # 象限风险修正: 滞肀1/衰退象限尾部风险更高
+    QUADRANT_DD_MODIFIER = {
+        "recovery": 0.90,    # 复苏期尾部风险较低
+        "overheat": 1.10,    # 过热期需警惕气泡
+        "stagflation": 1.20, # 滞肀1股债双杀风险最高
+        "deflation": 1.05,   # 衰退通缩债券还能护体
+    }
+    dd_multiplier *= QUADRANT_DD_MODIFIER.get(quadrant, 1.0)
+    est_max_dd = -est_vol * dd_multiplier
 
     kpi = {
         "ann_return_pct": round(est_return * 100, 2),
