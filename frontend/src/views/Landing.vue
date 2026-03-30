@@ -63,32 +63,37 @@
 
       <!-- Uploaded Files Table -->
       <section v-if="selectedFiles.length > 0" class="file-section fade-in">
-        <div class="file-section-header">
-          <h3>已选文件</h3>
+        <div class="file-section-header" @click="isFileListExpanded = !isFileListExpanded" style="cursor: pointer; user-select: none;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="material-symbols-outlined" style="font-size:18px; transition: transform 0.3s;" :style="{ transform: isFileListExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }">chevron_right</span>
+            <h3 style="margin:0;">已选文件</h3>
+          </div>
           <span class="file-count">{{ selectedFiles.length }} 个文件</span>
         </div>
-        <table class="file-table">
-          <thead>
-            <tr>
-              <th>文件名</th>
-              <th>大小</th>
-              <th>状态</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(file, idx) in selectedFiles" :key="idx">
-              <td class="ft-name">{{ file.name }}</td>
-              <td class="ft-size">{{ formatFileSize(file.size) }}</td>
-              <td><span class="status-badge badge-ready">就绪</span></td>
-              <td class="ft-actions">
-                <button class="icon-btn icon-btn-danger" @click.stop="removeFile(idx)" title="移除">
-                  <span class="material-symbols-outlined" style="font-size:16px;">delete</span>
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-show="isFileListExpanded" style="transition: all 0.3s ease;">
+          <table class="file-table">
+            <thead>
+              <tr>
+                <th>文件名</th>
+                <th>大小</th>
+                <th>状态</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(file, idx) in selectedFiles" :key="idx">
+                <td class="ft-name">{{ file.name }}</td>
+                <td class="ft-size">{{ formatFileSize(file.size) }}</td>
+                <td><span class="status-badge badge-ready">就绪</span></td>
+                <td class="ft-actions">
+                  <button class="icon-btn icon-btn-danger" @click.stop="removeFile(idx)" title="移除">
+                    <span class="material-symbols-outlined" style="font-size:16px;">delete</span>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- AI Review Canvas (SSE Stream) -->
@@ -131,6 +136,7 @@ const isGeneratingReview = ref(false)
 const reviewStatus = ref('')
 const reviewText = ref('')
 const toastMessage = ref('')
+const isFileListExpanded = ref(false)
 
 function showToast(msg) {
   toastMessage.value = msg
@@ -596,6 +602,18 @@ const renderedReview = computed(() => {
 }
 .market-review-text :deep(p) { margin-bottom: 16px; text-indent: 2em; }
 .market-review-text :deep(strong) { color: #ba1a1a; font-weight: 700; }
+.market-review-text :deep(hr) { border: none; border-top: 1px solid #e1e3e4; margin: 28px 0; }
+.market-review-text :deep(ul) {
+  list-style: disc;
+  padding-left: 1.5em;
+  margin: 12px 0;
+}
+.market-review-text :deep(li) {
+  text-indent: 0;
+  margin-bottom: 10px;
+  line-height: 1.8;
+  font-size: 18px;
+}
 
 .cursor-blink {
   display: inline;

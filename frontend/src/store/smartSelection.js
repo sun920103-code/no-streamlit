@@ -25,6 +25,8 @@ export const useSmartStore = defineStore('zx_smartSelection', {
 
     // ── Step 2: 战术配置结果 ──
     zx_tacticalResult: null,
+    zx_tacticalOneclickResult: null,   // 一键战术配置完整返回
+    zx_uploadedReports: [],            // 已上传研报文件列表
 
     // ── Step 3: 回测结果 ──
     zx_backtestResult: null,
@@ -68,6 +70,7 @@ export const useSmartStore = defineStore('zx_smartSelection', {
     // ── 结果存储 ──
     setMacroResult(result) { this.zx_macroResult = result },
     setTacticalResult(result) { this.zx_tacticalResult = result },
+    setTacticalOneclickResult(result) { this.zx_tacticalOneclickResult = result },
     setBacktestResult(result) { this.zx_backtestResult = result },
     setFundPool(pool, grouped) {
       this.zx_fundPool = pool
@@ -79,6 +82,8 @@ export const useSmartStore = defineStore('zx_smartSelection', {
     clearAll() {
       this.zx_macroResult = null
       this.zx_tacticalResult = null
+      this.zx_tacticalOneclickResult = null
+      this.zx_uploadedReports = []
       this.zx_backtestResult = null
       this.zx_loading = false
       this.zx_error = null

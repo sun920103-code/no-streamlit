@@ -32,6 +32,12 @@ export const zxTacticalWithReport = (formData) => smartApi.post('/api/v1/smart/t
   timeout: 180000,
 })
 
+// ── 一键战术配置 (multipart: 新闻调仓 + 研报调仓) ──
+export const zxTacticalOneClick = (formData) => smartApi.post('/api/v1/smart/tactical_oneclick', formData, {
+  headers: { 'Content-Type': undefined },
+  timeout: 300000,
+})
+
 // ── 历史回测引擎 ──
 export const zxBacktest = (payload) => smartApi.post('/api/v1/smart/backtest', payload, {
   timeout: 120000,
