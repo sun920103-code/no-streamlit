@@ -130,20 +130,22 @@ def _asset_views_to_fund_weights(
     bare_codes: list,
     class_map: dict,
     amplifier: float = 1.5,
+    base_weights: dict = None,
 ) -> dict:
     """
     将资产类别级得分通过 class_map 广播到基金级权重。
-    逻辑 (与 legacy app.py L136-145 一致):
+    逻辑:
       1. asset_views = {asset_class: score}  (score ∈ [-1, 1])
       2. 每只基金获得其所属 asset_class 的 score
       3. 将 score 转为年化超额预期 view = score * 0.15
-      4. 等权基线 + view * confidence * amplifier → 目标权重
+      4. 基线权重 (original_weights 或等权) + view * confidence * amplifier → 目标权重
       5. 归一化到 sum=1
     """
     n = max(len(bare_codes), 1)
-    base_w = 1.0 / n
     raw = {}
     for code in bare_codes:
+        # ✅ 基于原始持仓做偏离 (而非等权)
+        base_w = base_weights.get(code, 1.0 / n) if base_weights else 1.0 / n
         ac = class_map.get(code, "大盘核心")
         score = asset_views.get(ac, 0.0)
         view = score * 0.15
@@ -153,7 +155,7 @@ def _asset_views_to_fund_weights(
     total = sum(raw.values())
     if total > 1e-8:
         return {k: v / total for k, v in raw.items()}
-    return {c: base_w for c in bare_codes}
+    return {c: (base_weights.get(c, 1.0/n) if base_weights else 1.0/n) for c in bare_codes}
 
 
 def _compute_kpi_from_nav(weights: dict, nav_df: pd.DataFrame) -> dict:
@@ -425,8 +427,14 @@ def _run_pipeline_sync(
 
         # 因子 → 资产类别级得分 (矩阵乘法)
         step1_asset_views = macro_factor_to_asset_views(step1_factors)
-        # 资产类别得分 → 基金级权重
-        step1_weights = _asset_views_to_fund_weights(step1_asset_views, bare_codes, class_map)
+        # 资产类别得分 → 基金级权重 (以原持仓为基准偏移)
+        step1_weights = _asset_views_to_fund_weights(
+            step1_asset_views, 
+            bare_codes, 
+            class_map, 
+            amplifier=1.5, 
+            base_weights=original_weights
+        )
 
         log_fn("✅ Step 1 完成: 宏观象限调仓就绪")
     except Exception as e:
@@ -457,14 +465,13 @@ def _run_pipeline_sync(
 
             step2_asset_views = macro_factor_to_asset_views(step2_factors)
             
-            # --- BL Optimizer Upgrade ---
+            # --- BL Optimizer (传入 class_map 脱离 Streamlit 依赖) ---
             from services.bl_fusion import black_litterman_fusion
             
             # 准备协方差矩阵
             if nav_df is not None and not nav_df.empty:
                 cov_matrix = nav_df.pct_change().dropna().cov()
             else:
-                import numpy as np
                 n_assets = len(bare_codes)
                 cov_matrix = pd.DataFrame(
                     np.eye(n_assets) * (0.15 / np.sqrt(252))**2, 
@@ -478,12 +485,13 @@ def _run_pipeline_sync(
             }
             
             bl_weights, _ = black_litterman_fusion(
-                rp_weights=step1_weights,
+                rp_weights=original_weights,      # ✅ 基于原始持仓, 避免叠加 step1 的偏移导致超调
                 cov_matrix=cov_matrix,
                 views=views_for_bl,
                 df_returns=nav_df,
-                orig_volatility=original_kpi.get('volatility', 0.0),
-                deviation_base=original_weights
+                orig_volatility=original_kpi.get('ann_vol', 0.0),  # ✅ 修正 key: ann_vol
+                deviation_base=original_weights,
+                fund_class_map=class_map,
             )
             step2_weights = bl_weights
 
@@ -543,6 +551,11 @@ def _run_pipeline_sync(
                 step3_debate_logs = debate_logs
 
                 if bl_views:
+                    # ✅ 直接使用 MOE 投委会输出的 bl_views 作为 BL 观点
+                    # bl_views 格式: {asset_class: {"view": float, "confidence": float}}
+                    log_fn(f"📊 MOE 观点: {list(bl_views.keys())}")
+                    
+                    # 同时尝试构建因子得分 (供雷达图使用)
                     step3_factors = {f: 0.0 for f in MACRO_FACTORS_6}
                     try:
                         import services.multi_agent as _ma_mod
@@ -557,35 +570,44 @@ def _run_pipeline_sync(
                                 step3_factors[f] = round((mod_val - 1.0) * 2.0, 3)
                     except Exception:
                         pass
-
                     step3_factors = _normalize_factor_keys(step3_factors)
-                    step3_asset_views = macro_factor_to_asset_views(step3_factors)
+
+                    # 用 bl_views 构建资产类别级得分 (供调仓理由生成)
+                    step3_asset_views = {}
+                    for ac, vdata in bl_views.items():
+                        if isinstance(vdata, dict):
+                            step3_asset_views[ac] = vdata.get("view", 0.0)
+                        else:
+                            step3_asset_views[ac] = float(vdata) if vdata else 0.0
                     
-                    # --- BL Optimizer Upgrade ---
+                    # --- BL Optimizer (直接使用 MOE bl_views) ---
                     from services.bl_fusion import black_litterman_fusion
                     
                     if nav_df is not None and not nav_df.empty:
                         cov_matrix = nav_df.pct_change().dropna().cov()
                     else:
-                        import numpy as np
                         n_assets = len(bare_codes)
                         cov_matrix = pd.DataFrame(
                             np.eye(n_assets) * (0.15 / np.sqrt(252))**2, 
                             index=bare_codes, columns=bare_codes
                         )
                     
-                    views_for_bl = {
-                        ac: {"view": val, "confidence": 0.8} 
-                        for ac, val in step3_asset_views.items()
-                    }
+                    # ✅ 直接传入 MOE 产出的 bl_views, 而非从全零因子重构
+                    views_for_bl = {}
+                    for ac, vdata in bl_views.items():
+                        if isinstance(vdata, dict):
+                            views_for_bl[ac] = vdata
+                        else:
+                            views_for_bl[ac] = {"view": float(vdata) if vdata else 0.0, "confidence": 0.7}
                     
                     bl_weights, _ = black_litterman_fusion(
-                        rp_weights=step2_weights,
+                        rp_weights=original_weights,       # ✅ 基于原始持仓
                         cov_matrix=cov_matrix,
                         views=views_for_bl,
                         df_returns=nav_df,
-                        orig_volatility=original_kpi.get('volatility', 0.0),
-                        deviation_base=original_weights
+                        orig_volatility=original_kpi.get('ann_vol', 0.0),  # ✅ 修正 key
+                        deviation_base=original_weights,
+                        fund_class_map=class_map,
                     )
                     step3_weights = bl_weights
 

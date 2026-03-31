@@ -1,8 +1,8 @@
 <template>
   <div class="fade-in relative font-body text-slate-900 antialiased">
 
-    <!-- Action Bar Container — 严格按照参考代码 -->
-    <div class="w-full max-w-5xl mx-auto mb-6">
+    <!-- Action Bar Container -->
+    <div class="w-full mb-6">
       <div class="bg-white rounded-xl shadow-sm border border-[#c4c6cd]/20 overflow-hidden">
         <div class="flex flex-row items-center gap-6 p-4 md:px-8 md:py-4 justify-center">
           <div class="shrink-0">
@@ -21,32 +21,66 @@
 
     <!-- Results Container -->
     <div class="bg-white rounded-xl shadow-sm border border-[#c4c6cd]/20 overflow-hidden p-6 mb-6" v-if="kpiList && kpiList.length > 0 || (timeseries && timeseries.dates)">
-      <!-- KPI Table -->
-      <div v-if="kpiList && kpiList.length > 0" style="overflow-x:auto; margin-bottom: 24px;">
-        <table class="holdings-table">
-          <thead>
-            <tr>
-              <th style="width: 180px;">对比策略</th>
-              <th style="text-align:right;">年化收益</th>
-              <th style="text-align:right;">年化波动</th>
-              <th style="text-align:right;">夏普比率</th>
-              <th style="text-align:right;">最大回撤</th>
-              <th style="text-align:right;">卡玛比率</th>
-              <th style="text-align:right;">胜率</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, i) in kpiList" :key="i" :style="{ backgroundColor: getRowBg(row.strategy_label) }">
-              <td style="font-weight:600;color:#001529;">{{ row.strategy_label }}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;" :style="{ color: getAmountColor(row.ann_return) }">{{ (row.ann_return * 100).toFixed(2) }}%</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;">{{ (row.ann_volatility * 100).toFixed(2) }}%</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;">{{ row.sharpe_ratio.toFixed(2) }}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#10B981;">{{ (row.max_drawdown * 100).toFixed(2) }}%</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;">{{ row.calmar_ratio.toFixed(2) }}</td>
-              <td style="text-align:right;font-family:'JetBrains Mono',monospace;">{{ (row.win_rate * 100).toFixed(1) }}%</td>
-            </tr>
-          </tbody>
-        </table>
+      
+      <!-- KPI Table with new HTML UI -->
+      <div v-if="kpiList && kpiList.length > 0" class="bg-[#ffffff] rounded-xl shadow-sm overflow-hidden border border-[#c4c6cf]/10 mb-8 flex flex-col">
+        <div class="px-6 py-4 bg-[#dfe3e7] flex justify-between items-center">
+          <h3 class="text-sm font-bold text-[#001d53] uppercase tracking-widest">策略绩效对比矩阵</h3>
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold text-slate-500 uppercase">Auto-refresh in 12s</span>
+            <div class="w-2 h-2 rounded-full bg-[#00b47d] animate-pulse"></div>
+          </div>
+        </div>
+        <div class="overflow-auto">
+          <table class="w-full text-left border-collapse min-w-[1000px]">
+            <thead class="sticky top-0 z-10">
+              <tr class="bg-[#f0f4f8]/90 backdrop-blur-sm border-b border-[#c4c6cf]/20">
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider">对比策略</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">年化收益</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">年化波动</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">夏普比率</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">最大回撤</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">卡玛比率</th>
+                <th class="px-6 py-4 text-xs font-bold text-slate-500 uppercase tracking-wider text-right">胜率</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-[#c4c6cf]/10 font-body">
+              <tr v-for="(row, i) in kpiList" :key="i"
+                class="transition-colors group"
+                :class="[
+                  row.strategy_label.includes('客户持仓') 
+                    ? 'bg-[#ffdad6]/10 hover:bg-[#ffdad6]/20' 
+                    : (i % 2 === 1 ? 'bg-[#f0f4f8]/20 hover:bg-[#e4e9ed]/30' : 'hover:bg-[#e4e9ed]/30')
+                ]"
+              >
+                <td class="px-6 py-4" 
+                  :class="[row.strategy_label.includes('客户持仓') ? 'font-bold text-[#001d53]' : (row.strategy_label.includes('调仓') || row.strategy_label.includes('配置') ? 'font-semibold text-[#001d53]' : '')]"
+                >
+                  <span class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-[#001d53] text-[18px]">
+                      {{
+                        row.strategy_label.includes('基准') ? 'show_chart' :
+                        row.strategy_label.includes('客户持仓') ? 'account_balance_wallet' :
+                        row.strategy_label.includes('宏观') ? 'public' :
+                        row.strategy_label.includes('资讯') || row.strategy_label.includes('新闻') ? 'analytics' :
+                        row.strategy_label.includes('研报') ? 'description' : 'show_chart'
+                      }}
+                    </span>
+                    {{ row.strategy_label }}
+                  </span>
+                </td>
+                <td class="px-6 py-4 text-right font-medium" :class="getReturnTextClass(row.ann_return)">
+                  {{ (row.ann_return * 100).toFixed(2) }}%
+                </td>
+                <td class="px-6 py-4 text-right">{{ (row.ann_volatility * 100).toFixed(2) }}%</td>
+                <td class="px-6 py-4 text-right">{{ row.sharpe_ratio.toFixed(2) }}</td>
+                <td class="px-6 py-4 text-right text-[#00b47d]">{{ (row.max_drawdown * 100).toFixed(2) }}%</td>
+                <td class="px-6 py-4 text-right">{{ row.calmar_ratio.toFixed(2) }}</td>
+                <td class="px-6 py-4 text-right">{{ (row.win_rate * 100).toFixed(1) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <!-- ECharts Backtest Bar Chart -->
@@ -97,6 +131,14 @@ const isLoading = ref(false)
 const btnLoading = ref(false)
 let chartInstance = null
 
+// 暴露 refreshChart 供父组件在 v-show 切换后调用
+function refreshChart() {
+  if (chartInstance) {
+    nextTick(() => chartInstance.resize())
+  }
+}
+defineExpose({ refreshChart })
+
 function getRowBg(label) {
   if (label.includes('客户持仓')) return 'rgba(239, 68, 68, 0.05)'
   if (label.includes('基准')) return 'rgba(107, 114, 128, 0.05)'
@@ -107,6 +149,17 @@ function getAmountColor(val) {
   if (val > 0) return '#EF4444';
   if (val < 0) return '#10B981';
   return '#43474d';
+}
+
+function getReturnTextClass(val) {
+  if (val > 0) return 'text-[#ba1a1a]';
+  if (val < 0) return 'text-[#00b47d]';
+  return 'text-[#43474d]';
+}
+
+function stripEmoji(str) {
+  if (!str) return str;
+  return str.replace(/^[^a-zA-Z\u4e00-\u9fa5\d]+/, '').trim();
 }
 
 async function handleBacktestClick() {
@@ -123,7 +176,23 @@ async function handleBacktestClick() {
   
   try {
     const res = await calculateKpis(req);
-    kpiList.value = res.data.kpi_list;
+    
+    // Sanitize emojis from labels
+    const sanitizedKpis = res.data.kpi_list.map(k => ({
+       ...k,
+       strategy_label: stripEmoji(k.strategy_label)
+    }));
+    
+    // Also sanitize timeseries keys
+    const newSeries = {};
+    if (res.data.timeseries && res.data.timeseries.series) {
+      for (const [key, val] of Object.entries(res.data.timeseries.series)) {
+        newSeries[stripEmoji(key)] = val;
+      }
+      res.data.timeseries.series = newSeries;
+    }
+
+    kpiList.value = sanitizedKpis;
     timeseries.value = res.data.timeseries;
     
     await nextTick();

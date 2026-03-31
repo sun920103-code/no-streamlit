@@ -230,7 +230,7 @@ async function runDebate() {
   debateViews.value = null;
 
   try {
-    const response = await fetch('http://localhost:8000/api/v1/simulate_smart_selection_debate', {
+    const response = await fetch('/api/v1/simulate_smart_selection_debate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: '宏观大类资产配置' })

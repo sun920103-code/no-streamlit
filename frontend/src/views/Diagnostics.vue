@@ -456,31 +456,60 @@
 
 
           <!-- ── Operation Log — Structured ── -->
-          <div v-if="rebalLogs.length > 0 || rebalRunning" style="margin-bottom:32px;">
-            <!-- Section Header -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-              <h2 style="font-family:'Manrope',sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.3px;color:#191c1d;display:flex;align-items:center;gap:12px;margin:0;">
-                <span style="width:6px;height:28px;background:#071d31;border-radius:9999px;flex-shrink:0;"></span>
-                运行日志 <span style="color:#43474d;font-weight:400;font-size:17px;margin-left:8px;">Operation Log</span>
-              </h2>
-              <span style="font-size:10px;font-family:'Inter',sans-serif;color:#43474d;background:#e7e8e9;padding:4px 10px;border-radius:4px;letter-spacing:0.04em;">SYSTEM_STATUS: ACTIVE</span>
-            </div>
-            <!-- Log Container -->
-            <div ref="rebalLogRef" style="background:#f3f4f5;border-radius:12px;padding:20px 24px;border:1px solid rgba(196,198,205,0.1);max-height:320px;overflow-y:auto;">
-              <div v-for="(log, idx) in rebalLogs" :key="idx" style="display:flex;align-items:center;gap:14px;padding:8px 0;" :style="idx < rebalLogs.length - 1 ? {borderBottom:'1px solid rgba(196,198,205,0.08)'} : {}">
-                <!-- Smart Icon based on log content -->
-                <span class="material-symbols-outlined" style="flex-shrink:0;font-size:20px;"
-                  :style="{
-                    color: log.includes('完成') || log.includes('✅') ? '#0c5216' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? '#72869e' : log.includes('全部') ? '#0c5216' : '#72869e',
-                    fontVariationSettings: log.includes('完成') || log.includes('✅') || log.includes('全部') ? '\'FILL\' 1' : '\'FILL\' 0'
-                  }">
-                  {{ log.includes('全部') ? 'verified' : log.includes('完成') || log.includes('✅') ? 'check_circle' : log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? 'info' : log.includes('EGARCH') ? 'query_stats' : log.includes('PCA') ? 'analytics' : log.includes('计算') ? 'calculate' : 'radio_button_checked' }}
-                </span>
-                <p style="font-size:14px;margin:0;line-height:1.5;" :style="{fontWeight: log.includes('全部') ? '700' : '500', color: log.includes('跳过') || log.includes('⚠') || log.includes('降级') ? '#43474d' : '#191c1d'}">{{ log }}</p>
+          <div v-if="rebalLogs.length > 0 || rebalRunning" class="w-full max-w-5xl bg-white rounded-2xl shadow-sm border border-[#e2e8f0] overflow-hidden mb-12 relative z-10">
+            <!-- Header -->
+            <div class="px-8 py-6 border-b border-[#e2e8f0] flex items-center justify-between bg-[#f8fafc]">
+              <div class="flex items-center gap-3">
+                <div class="w-1.5 h-6 bg-[#1A365D] rounded-full"></div>
+                <div class="flex items-baseline gap-3">
+                  <h2 class="text-xl font-bold text-[#1A365D] tracking-tight m-0" style="font-family: 'Inter', sans-serif;">运行日志</h2>
+                  <span class="text-sm font-medium text-[#64748b] uppercase tracking-wider opacity-60">Operation Log</span>
+                </div>
               </div>
-              <div v-if="rebalRunning" style="display:flex;align-items:center;gap:14px;padding:8px 0;color:#43474d;">
-                <span class="material-symbols-outlined" style="font-size:20px;color:#72869e;animation:pulse 2s ease-in-out infinite;">pending</span>
-                <span style="font-size:14px;">处理中<span style="animation:blink 1.4s infinite both;">.</span><span style="animation:blink 1.4s infinite both 0.2s;">.</span><span style="animation:blink 1.4s infinite both 0.4s;">.</span></span>
+              <span class="text-[10px] font-bold tracking-widest text-[#64748b] uppercase px-3 py-1.5 bg-[#f1f5f9] rounded m-0 border border-[#e2e8f0]">System_Status: Active</span>
+            </div>
+
+            <!-- Content List -->
+            <div ref="rebalLogRef" class="px-8 py-8 max-h-[400px] overflow-y-auto">
+              <div class="space-y-0">
+                <div v-for="(log, idx) in rebalLogs" :key="idx" 
+                    class="relative timeline-item" :class="[idx === rebalLogs.length - 1 && !rebalRunning ? '' : 'pb-8']">
+                  <div class="timeline-line"></div>
+                  <div class="flex items-start gap-4">
+                    <div class="relative z-10 flex items-center justify-center w-[23px] h-[23px] rounded-full bg-white border-2"
+                         :class="[log.includes('完成') || log.includes('✅') || log.includes('全部') ? 'border-[#10b981]' : (log.includes('异常') || log.includes('⚠️') ? 'border-[#f59e0b]' : 'border-[#0c56d0]/20')]">
+                      <div class="w-2 h-2 rounded-full" 
+                           :class="[log.includes('完成') || log.includes('✅') || log.includes('全部') ? 'bg-[#10b981]' : (log.includes('异常') || log.includes('⚠️') ? 'bg-[#f59e0b]' : 'bg-[#0c56d0]')]"></div>
+                    </div>
+                    <div class="flex items-start gap-3 mt-0.5">
+                      <span class="text-lg leading-tight mt-[1px]">{{ parseLogEntry(log).icon }}</span>
+                      <p class="text-[15px] m-0" 
+                        :class="[log.includes('全部') ? 'font-bold text-[#1A365D]' : (log.includes('异常') ? 'font-medium text-[#b45309]' : 'font-medium text-[#1e293b]')]">
+                        {{ parseLogEntry(log).text }}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Processing state -->
+                <div v-if="rebalRunning" class="relative timeline-item">
+                  <div class="flex items-start gap-4">
+                    <div class="relative z-10 flex items-center justify-center w-[23px] h-[23px] rounded-full bg-white border-2 border-slate-200 mt-0.5">
+                      <div class="w-2 h-2 rounded-full bg-slate-400 animate-pulse"></div>
+                    </div>
+                    <div class="flex items-center gap-3 mt-1">
+                      <span class="text-lg">💬</span>
+                      <div class="flex items-center gap-2">
+                        <p class="text-[15px] font-semibold text-[#64748b] m-0">处理中...</p>
+                        <div class="flex gap-1" style="margin-top: 2px;">
+                          <span class="w-1 h-1 bg-[#64748b] rounded-full animate-bounce" style="animation-delay: 0s"></span>
+                          <span class="w-1 h-1 bg-[#64748b] rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
+                          <span class="w-1 h-1 bg-[#64748b] rounded-full animate-bounce" style="animation-delay: 0.4s"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -818,11 +847,12 @@
           </div>
         </div>
 
-        <!-- Page 3: 业绩回测 (Now fully dynamic) -->
-        <div v-if="activePage === 2 && holdings.length > 0" class="fade-in">
+        <!-- Page 3: 业绩回测 (v-show 保持状态) -->
+        <div v-show="activePage === 2 && holdings.length > 0" class="fade-in">
            <!-- Campaign 13: The 3-Way Grid Component -->
            <ThreeWayMatrix />
            <BacktestDashboard 
+             ref="backtestRef"
              :strategiesPayload="getStrategiesPayload" 
              :pdfStatePayload="getPdfStatePayload" 
            />
@@ -848,8 +878,16 @@ import BacktestDashboard from '../components/BacktestDashboard.vue'
 import ThreeWayMatrix from '../components/ThreeWayMatrix.vue'
 
 const activePage = ref(0)
+const backtestRef = ref(null)
 const currentStep = ref(0) // 0: upload, 1: mapping, 2: hrp
 const hrpResultTable = ref(null)
+
+// 切回回测页时刷新图表尺寸 (v-show 隐藏后 echarts 宽度为 0)
+watch(activePage, (newVal) => {
+  if (newVal === 2 && backtestRef.value) {
+    backtestRef.value.refreshChart()
+  }
+})
 
 // ── 一键调仓管线状态 ──
 const rebalReports = ref([])
@@ -991,7 +1029,7 @@ async function runRebalPipeline() {
   formData.append('total_amount', String(holdingsTotal.value || 10000000))
 
   try {
-    const response = await fetch('http://localhost:8000/api/v1/rebalance/run_full_pipeline', {
+    const response = await fetch('/api/v1/rebalance/run_full_pipeline', {
       method: 'POST',
       body: formData,
     })
@@ -1028,6 +1066,16 @@ async function runRebalPipeline() {
   } finally {
     rebalRunning.value = false
   }
+}
+
+function parseLogEntry(str) {
+  if (!str) return { icon: '💬', text: '' };
+  // Clean emoji/symbols at start to isolate text
+  let labelText = str.replace(/^[^a-zA-Z\u4e00-\u9fa5\d\[\]]+/, '').trim();
+  let iconPart = str.slice(0, str.length - labelText.length).trim();
+  
+  if (!iconPart) iconPart = '💬';
+  return { icon: iconPart, text: labelText };
 }
 
 function formatRebalMd(text) {
@@ -1878,6 +1926,18 @@ function initQuadrantChart() {
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.4; }
+}
+.timeline-line::before {
+    content: '';
+    position: absolute;
+    left: 11px;
+    top: 28px;
+    bottom: 0;
+    width: 1px;
+    background-color: #e2e8f0;
+}
+.timeline-item:last-child .timeline-line::before {
+    display: none;
 }
 </style>
 
