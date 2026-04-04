@@ -96,3 +96,90 @@ def get_current_macro_regime_mock() -> Dict[str, Any]:
     mock_df.iloc[-10:, 1] += 1  # CPI 上升
     
     return engine.predict_current_regime(mock_df)
+
+def get_current_macro_regime_live() -> Dict[str, Any]:
+    """
+    实盘调用的宏观体制识别引擎：
+    1. 通过 tushare_fetcher 拉取真实宏观经济序列 (10年/120个月)
+    2. 计算真实的滚动 Z-score 以消除绝对数值差异
+    3. 调用 HMM 隐马尔可夫模型进行训练和推断
+    """
+    import sys
+    import os
+    
+    # 动态载入 tushare_fetcher
+    script_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+    if script_dir not in sys.path:
+        sys.path.append(script_dir)
+        
+    try:
+        from tushare_fetcher import fetch_macro_economic_indicators
+    except ImportError as e:
+        print(f"导入 tushare_fetcher 失败: {e}，回退使用 mock")
+        return get_current_macro_regime_mock()
+        
+    # 拉取 120 个月 (10年) 数据
+    df_macro = fetch_macro_economic_indicators(limit=120)
+    
+    if df_macro is None or df_macro.empty:
+        print("Tushare 宏观数据为空，回退使用 mock")
+        return get_current_macro_regime_mock()
+        
+    # 前向后向填充缺失值
+    df_macro.ffill(inplace=True)
+    df_macro.bfill(inplace=True)
+    
+    # 执行 Z-Score 规范化：使用过去均值和标准差 (即标准化时序)
+    # 确保列包含: PMI, CPI_YoY, M2_Growth, Credit_Impulse
+    required_cols = ['PMI', 'CPI_YoY', 'M2_Growth', 'Credit_Impulse']
+    for col in required_cols:
+        if col not in df_macro.columns:
+            df_macro[col] = 0.0
+            
+    df_zscore = df_macro.copy()
+    
+    # 获取最新的绝对指标值，用于返回展示
+    latest_absolute_values = {col: float(df_macro[col].iloc[-1]) for col in required_cols}
+    latest_zscores = {}
+    
+    import warnings
+    # 忽略计算标准差时的 RuntimeWarning
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for col in required_cols:
+            mean_val = df_macro[col].mean()
+            std_val = df_macro[col].std()
+            if std_val > 1e-6:
+                df_zscore[col] = (df_macro[col] - mean_val) / std_val
+            else:
+                df_zscore[col] = 0.0
+            latest_zscores[col] = float(df_zscore[col].iloc[-1])
+            
+    # 只使用这四根因子的 Z-Score 来喂给 HMM 引擎
+    engine = MarkovMacroEngine(n_components=4)
+    # HMM 会根据 4 维空间自动无监督聚类
+    result = engine.predict_current_regime(df_zscore[required_cols])
+    
+    # 进行四象限业务语义打标 (简化的启发式映射)
+    # 根据这一类别的平均 PMI 和 CPI 来推测
+    state_id = result["current_state_id"]
+    state_char = result["state_characteristics"][f"Regime_{state_id}"]
+    
+    z_pmi = state_char.get("PMI", 0.0)
+    z_cpi = state_char.get("CPI_YoY", 0.0)
+    
+    if z_pmi >= 0 and z_cpi < 0:
+        bussiness_regime = "recovery"
+    elif z_pmi >= 0 and z_cpi >= 0:
+        bussiness_regime = "overheat"
+    elif z_pmi < 0 and z_cpi >= 0:
+        bussiness_regime = "stagflation"
+    else:
+        bussiness_regime = "deflation"
+        
+    result["current_regime"] = bussiness_regime
+    result["latest_zscores"] = latest_zscores
+    result["latest_absolute_values"] = latest_absolute_values
+    
+    return result
+

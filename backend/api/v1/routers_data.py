@@ -306,7 +306,7 @@ def _compute_fund_summary(task_id: str, fund_codes: List[str]) -> Dict:
                     one_month_ago_idx = max(0, len(series) - 22)
                     prev = series.iloc[one_month_ago_idx]
                     if prev > 0:
-                        monthly_returns[col] = round((last / prev - 1) * 100, 2)
+                        monthly_returns[col] = float(round((last / prev - 1) * 100, 2))
         except Exception as e:
             logger.warning(f"计算月收益率失败: {e}")
 
@@ -375,11 +375,11 @@ def _compute_fund_summary(task_id: str, fund_codes: List[str]) -> Dict:
 
         enhanced[bare] = {
             "name": fund_name if fund_name and fund_name != "nan" else "",
-            "monthly_pl": round(monthly_pl, 2),
-            "volatility": volatility,
+            "monthly_pl": float(round(monthly_pl, 2)),
+            "volatility": float(volatility),
             "status": status,
-            "ret_ytd": ret_ytd,
-            "ret_1y": ret_1y,
+            "ret_ytd": float(ret_ytd) if ret_ytd is not None else None,
+            "ret_1y": float(ret_1y) if ret_1y is not None else None,
             "style_drifted": bare in drift_set,
             "mgr_changed": bare in mgr_changed_set,
         }
@@ -541,14 +541,14 @@ def run_sync_script(task_id: str, fund_codes: List[str]):
 
     script_path = os.path.join(backend_dir, "scripts", "sync_client_holdings.py")
 
-    logger.info(f"Task {task_id} - Spawning subprocess: python {script_path} <codes> {out_csv}")
+    logger.info(f"Task {task_id} - Spawning subprocess: {sys.executable} {script_path} <codes> {out_csv}")
 
     try:
         env = os.environ.copy()
         env["PYTHONPATH"] = backend_dir + os.pathsep + env.get("PYTHONPATH", "")
 
         process = subprocess.Popen(
-            ["python", script_path, codes_str, out_csv],
+            [sys.executable, script_path, codes_str, out_csv],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -567,6 +567,14 @@ def run_sync_script(task_id: str, fund_codes: List[str]):
         process.stdout.close()
         returncode = process.wait()
         out_text = "".join(out_lines)
+
+        # DEBUG: Save full subprocess output to a log file
+        log_path = os.path.join(data_dir, f"sync_subprocess_{task_id}.log")
+        try:
+            with open(log_path, "w", encoding="utf-8") as _f:
+                _f.write(out_text)
+        except Exception as e:
+            logger.error(f"无法保存子进程日志: {e}")
 
         if "__CLIENT_SYNC_RESULT_START__" in out_text and "__CLIENT_SYNC_RESULT_END__" in out_text:
             try:

@@ -379,51 +379,48 @@ def _run_pipeline_sync(
     step1_weights = {}
 
     try:
-        from services.macro_data_collector import (
-            fetch_macro_factors, fetch_valuation_factors,
-            fetch_risk_momentum_factors, calculate_derived_factors,
-            calculate_factor_scores,
-        )
+        from services.markov_engine import get_current_macro_regime_live
+        import math
 
-        log_fn("📡 正在检索 EDB 宏观数据...")
-        macro_data = fetch_macro_factors()
-        val_data = fetch_valuation_factors()
-        risk_data = fetch_risk_momentum_factors()
-        derived = calculate_derived_factors(macro_data, val_data)
-        scores = calculate_factor_scores(macro_data, val_data, risk_data, derived)
+        log_fn("📡 正在调用 Tushare 实盘数据测算宏观环境...")
+        hmm_result = get_current_macro_regime_live()
+        
+        zscores = hmm_result.get("latest_zscores", {})
+        z_pmi = zscores.get("PMI", 0.0)
+        z_cpi = zscores.get("CPI_YoY", 0.0)
+        z_credit = zscores.get("Credit_Impulse", 0.0)
+        
+        log_fn(f"✅ Tushare 数据测算完成 (Z-Scores PMI: {z_pmi:.2f}, CPI: {z_cpi:.2f})")
 
-        if scores is None:
-            raise RuntimeError("EDB 因子得分计算返回 None (数据不足)")
-
-        log_fn(f"✅ EDB 数据下载完成 (市场状态: {scores.get('market_state', 'N/A')})")
-
-        _composite = scores.get("composite_score", 0.5)
-        _macro_t = scores.get("macro_total", 0)
-        _val_t = scores.get("valuation_total", 0)
-
+        # 将 Z-Score 映射到 [-1.0, 1.0] 的因子观点击分
+        # 用 tanh 让极端值平滑收敛
         step1_factors = {
-            "经济增长": round(float(_macro_t * 2), 3),
-            "通胀商品": round(float(-_val_t * 1.5), 3),
-            "利率环境": round(float(_macro_t * 1.2), 3),
-            "信用扩张": round(float((_composite - 0.5) * 2), 3),
+            "经济增长": round(math.tanh(z_pmi / 2.0), 3),
+            "通胀商品": round(math.tanh(z_cpi / 2.0), 3),
+            "信用扩张": round(math.tanh(z_credit / 2.0), 3),
+            "利率环境": round(math.tanh(-z_credit / 2.0), 3), # 信用扩张时利率通常向下
             "海外环境": 0.0,
-            "市场情绪": round(float((_composite - 0.5) * 3), 3),
+            "市场情绪": round(math.tanh(z_pmi / 3.0), 3), # 经济好时情绪通常偏好
         }
         step1_factors = _normalize_factor_keys(step1_factors)
 
-        # 象限定位
-        _growth = step1_factors.get("经济增长", 0)
-        _inflation = step1_factors.get("通胀商品", 0)
-        if _growth >= 0 and _inflation >= 0:
-            _q_label, _q_desc = "过热期", "经济扩张+通胀上行，偏向商品/短久期"
-        elif _growth >= 0 and _inflation < 0:
-            _q_label, _q_desc = "复苏期", "经济扩张+通胀温和，利好权益/信用"
-        elif _growth < 0 and _inflation >= 0:
-            _q_label, _q_desc = "滞胀期", "经济收缩+通胀高企，防御为主"
-        else:
-            _q_label, _q_desc = "衰退期", "经济收缩+通胀回落，利好债券/防御"
-        step1_quadrant = {"quadrant": _q_label, "label": _q_label, "description": _q_desc}
-        log_fn(f"🧭 宏观象限: {_q_label}")
+        # 象限定位 (直出)
+        _q_label = hmm_result.get("current_regime", "recovery")
+        _q_desc_map = {
+            "overheat": "经济扩张+通胀上行，偏向商品/短久期",
+            "recovery": "经济扩张+通胀温和，利好权益/信用",
+            "stagflation": "经济收缩+通胀高企，防御为主",
+            "deflation": "经济收缩+通胀回落，利好债券/防御"
+        }
+        _q_label_cn = {
+            "overheat": "过热期",
+            "recovery": "复苏期",
+            "stagflation": "滞胀期",
+            "deflation": "衰退期"
+        }.get(_q_label, "复苏期")
+        
+        step1_quadrant = {"quadrant": _q_label_cn, "label": _q_label_cn, "description": _q_desc_map.get(_q_label, "")}
+        log_fn(f"🧭 宏观象限探测: {_q_label_cn}")
 
         # 因子 → 资产类别级得分 (矩阵乘法)
         step1_asset_views = macro_factor_to_asset_views(step1_factors)

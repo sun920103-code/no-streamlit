@@ -294,3 +294,81 @@ def fetch_index_daily(index_codes: dict, start_date: str, end_date: str) -> pd.D
     result = pd.DataFrame(all_series)
     result.index = pd.to_datetime(result.index)
     return result.sort_index()
+
+
+# ═══════════════════════════════════════════
+# 5. 宏观经济指标 (月度频次)
+# ═══════════════════════════════════════════
+
+def fetch_macro_economic_indicators(limit: int = 150) -> pd.DataFrame:
+    """
+    通过 Tushare 获取核心宏观经济指标：PMI, CPI_YoY, M2_Growth, Credit_Impulse (M1-M2差)
+    带有一天内有效的文件缓存，以保护 API 配额。
+    
+    :param limit: 获取的月数
+    :return: DataFrame, index 包含 'PMI', 'CPI_YoY', 'M2_Growth', 'Credit_Impulse', index 是月份 'YYYYMM'
+    """
+    import json
+    
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_file = os.path.join(cache_dir, "macro_indicators_cache.json")
+    
+    # 尝试加载缓存
+    if os.path.exists(cache_file):
+        try:
+            mt = os.path.getmtime(cache_file)
+            if time.time() - mt < 86400:  # 缓存 24 小时
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cache_content = json.load(f)
+                    df = pd.DataFrame(cache_content)
+                    if not df.empty:
+                        df.index = pd.to_datetime(df.index)
+                        return df
+        except Exception as e:
+            logging.warning(f"[Tushare] 读取宏观缓存失败: {e}")
+            
+    api = _get_api()
+    
+    try:
+        logging.info("[Tushare] 正在拉取宏观指标: PMI...")
+        df_pmi = api.cn_pmi(limit=limit)
+        # 兼容 Tushare 大小写返回
+        month_col = 'MONTH' if 'MONTH' in df_pmi.columns else 'month'
+        pmi_col = 'PMI010000' if 'PMI010000' in df_pmi.columns else 'pmi'
+        df_pmi = df_pmi[[month_col, pmi_col]].set_index(month_col)
+        df_pmi.columns = ['PMI']
+        time.sleep(0.5)
+        
+        logging.info("[Tushare] 正在拉取宏观指标: CPI...")
+        df_cpi = api.cn_cpi(limit=limit)
+        df_cpi = df_cpi[['month', 'nt_yoy']].set_index('month')
+        df_cpi.columns = ['CPI_YoY']
+        time.sleep(0.5)
+        
+        logging.info("[Tushare] 正在拉取宏观指标: M2...")
+        df_m = api.cn_m(limit=limit)
+        df_m = df_m[['month', 'm2_yoy', 'm1_yoy']].set_index('month')
+        df_m['Credit_Impulse'] = df_m['m1_yoy'] - df_m['m2_yoy']  # 用 M1-M2 增速剪刀差作为流动性/信用脉冲替代
+        df_m = df_m[['m2_yoy', 'Credit_Impulse']]
+        df_m.columns = ['M2_Growth', 'Credit_Impulse']
+        
+        # 将三者合并
+        df_macro = pd.concat([df_pmi, df_cpi, df_m], axis=1)
+        df_macro.index = pd.to_datetime(df_macro.index, format='%Y%m')
+        df_macro = df_macro.sort_index()
+        
+        # 保存缓存 (将 index 转换为字符串)
+        try:
+            cache_save = df_macro.copy()
+            cache_save.index = cache_save.index.strftime('%Y-%m-%d')
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_save.to_dict(), f, indent=2)
+        except Exception as e:
+            logging.warning(f"[Tushare] 保存宏观缓存失败: {e}")
+            
+        return df_macro
+        
+    except Exception as e:
+        logging.error(f"[Tushare] 拉取宏观指标异常: {e}")
+        return pd.DataFrame()

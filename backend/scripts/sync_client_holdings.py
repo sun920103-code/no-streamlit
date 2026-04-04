@@ -379,8 +379,8 @@ def main():
                                 if not s_prev.empty:
                                     val_start = float(s_prev.iloc[-1])
                                     s_dict[yr_key] = (val_end / val_start) - 1.0
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logging.warning(f"  ⚠️ {bare} ret_{yr} 兜底异常: {e}")
                 
                 # YTD 兜底
                 if 'ret_ytd' not in s_dict:
@@ -388,18 +388,21 @@ def main():
                         s_prev = s[s.index.year < s_last_dt.year]
                         if not s_prev.empty:
                             s_dict['ret_ytd'] = (s_last_val / float(s_prev.iloc[-1])) - 1.0
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.warning(f"  ⚠️ {bare} ret_ytd 兜底异常: {e}")
                 
                 # 周期回报兜底 (6M, 1Y, 3Y, 5Y)
                 # 使用 timedelta 做粗略计算 (182, 365, 1095, 1826)
                 _cycle_map = [(182, 'ret_6m'), (365, 'ret_1y'), (1095, 'ret_3y'), (1826, 'ret_5y')]
                 for days, key in _cycle_map:
                     if key not in s_dict:
-                        ago_dt = s_last_dt - timedelta(days=days)
-                        past_vals = s[:ago_dt.strftime('%Y-%m-%d')]
-                        if not past_vals.empty:
-                            s_dict[key] = (s_last_val / float(past_vals.iloc[-1])) - 1.0
+                        try:
+                            ago_dt = s_last_dt - timedelta(days=days)
+                            past_vals = s[:ago_dt.strftime('%Y-%m-%d')]
+                            if not past_vals.empty:
+                                s_dict[key] = (s_last_val / float(past_vals.iloc[-1])) - 1.0
+                        except Exception as e:
+                            logging.warning(f"  ⚠️ {bare} {key} 兜底异常: {e}")
                 
                 # 波动率与回撤兜底 (3年)
                 if 'vol_3y' not in s_dict or 'max_dd_3y' not in s_dict:
@@ -411,8 +414,8 @@ def main():
                                 s_dict['vol_3y'] = float(s_3y.pct_change().std() * (252**0.5))
                             if 'max_dd_3y' not in s_dict:
                                 s_dict['max_dd_3y'] = float(abs((s_3y / s_3y.cummax() - 1.0).min()))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logging.warning(f"  ⚠️ {bare} vol/mdd 兜底异常: {e}")
 
         # --- 诊断统计 ---
         _got_ret = sum(1 for c, v in _summary_data.items() if any(k.startswith("ret_") for k in v))

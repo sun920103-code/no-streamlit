@@ -111,23 +111,26 @@ async def get_macro_regime():
 
     基于隐马尔可夫模型(HMM)的多维宏观指标序列(如 PMI, CPI, M2) 进行识别。
     """
-    from services.markov_engine import get_current_macro_regime_mock
+    from services.markov_engine import get_current_macro_regime_live
     
     # 调用 HMM 模型推断当前状态
-    hmm_result = get_current_macro_regime_mock()
+    hmm_result = get_current_macro_regime_live()
     regime_name = hmm_result.get("current_regime", "recovery")
     conf = hmm_result.get("confidence", 0.72)
+    
+    # 优先展示 Z-Score 还是 绝对值? 由于 UI 原本展示 "EDB Z-Scores"，我们传递 Z-Scores
+    indicators = hmm_result.get("latest_zscores", {
+        "PMI": 0.0,
+        "CPI_YoY": 0.0,
+        "M2_Growth": 0.0,
+        "Credit_Impulse": 0.0,
+    })
     
     return MacroRegimeResponse(
         regime=regime_name,
         confidence=conf,
-        indicators={
-            "PMI": 50.2,
-            "CPI_YoY": 0.8,
-            "M2_Growth": 7.1,
-            "Credit_Impulse": 1.3,
-        },
-        description=f"当前经由 Markov 模型识别处于 {regime_name} 阶段，置信度 {conf:.1%}",
+        indicators=indicators,
+        description=f"当前经由实盘量化 Markov 模型识别处于 {regime_name} 阶段，置信度 {conf:.1%}",
     )
 
 

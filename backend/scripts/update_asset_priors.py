@@ -90,6 +90,7 @@ def fetch_nav_data(all_codes: list, years: int = 3) -> pd.DataFrame:
     # Wind API 单次最大支持约 50 只基金的 wsd, 分批下载
     batch_size = 40
     all_nav = pd.DataFrame()
+    failed_codes = []
     
     for i in range(0, len(all_codes), batch_size):
         batch = all_codes[i:i + batch_size]
@@ -99,6 +100,7 @@ def fetch_nav_data(all_codes: list, years: int = 3) -> pd.DataFrame:
         res = w.wsd(batch_str, "nav_adj", start_date, end_date, "")
         if res.ErrorCode != 0:
             print(f"   ❌ Wind API 错误: ErrorCode={res.ErrorCode}")
+            failed_codes.extend(batch)
             continue
         
         if len(batch) == 1:
@@ -110,9 +112,43 @@ def fetch_nav_data(all_codes: list, years: int = 3) -> pd.DataFrame:
             all_nav = df_batch
         else:
             all_nav = all_nav.join(df_batch, how='outer')
+            
+    # ------ Tushare 兜底逻辑 ------
+    # 找出确实没有拿到数据的代码 (包括 ErrorCode != 0，或 wsd 返回了空数据的)
+    fetched_codes = set(all_nav.columns) if not all_nav.empty else set()
+    missing_codes = [c for c in all_codes if c not in fetched_codes or (c in fetched_codes and all_nav[c].notna().sum() < 20)]
+    missing_codes = list(set(missing_codes) | set(failed_codes))
     
-    all_nav.sort_index(inplace=True)
-    all_nav.ffill(inplace=True)
+    if missing_codes:
+        print(f"⚠️ Wind 缺失或失败 {len(missing_codes)} 只基金，启动 Tushare 兜底...")
+        try:
+            from tushare_fetcher import fetch_fund_nav
+            # Tushare fetch_fund_nav 接受 bare codes，返回也是 bare codes 为列名
+            bare_to_orig = {c.split('.')[0].zfill(6): c for c in missing_codes}
+            ts_nav = fetch_fund_nav(list(bare_to_orig.keys()), start_date, end_date)
+            
+            if not ts_nav.empty:
+                # 把 ts_nav 的列名还原为 original code
+                ts_nav.columns = [bare_to_orig.get(str(c).zfill(6), c) for c in ts_nav.columns]
+                
+                if all_nav.empty:
+                    all_nav = ts_nav
+                else:
+                    for c in ts_nav.columns:
+                        if c in all_nav.columns:
+                            all_nav[c] = ts_nav[c].combine_first(all_nav[c])
+                        else:
+                            all_nav = all_nav.join(ts_nav[[c]], how='outer')
+                print(f"✅ Tushare 兜底成功补齐 {len(ts_nav.columns)} 只基金数据")
+        except ImportError:
+            print("❌ tushare_fetcher 未找到，跳过兜底")
+        except Exception as e:
+            print(f"❌ Tushare 兜底异常: {e}")
+    # ----------------------------
+    
+    if not all_nav.empty:
+        all_nav.sort_index(inplace=True)
+        all_nav.ffill(inplace=True)
     
     print(f"✅ 数据下载完成: {all_nav.shape[0]} 个交易日, {all_nav.shape[1]} 只基金")
     return all_nav
