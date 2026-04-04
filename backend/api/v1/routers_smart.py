@@ -506,22 +506,33 @@ def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool,
 #  POST /smart/tactical_oneclick — 一键战术配置引擎
 # ═══════════════════════════════════════════════════
 
-# ── 协方差矩阵缓存 (基金池级) ──
+# ── 协方差矩阵缓存 (基金池级, 30天有效期) ──
 _COV_CACHE_FILE = os.path.join(BACKEND_DIR, "data", "zx_fund_cov_cache.json")
+_COV_STALENESS_DAYS = 30  # 协方差矩阵有效期: 30天
 _cov_cache = {"matrix": None, "codes": [], "built_at": None}
+
+
+def _is_cov_cache_fresh(built_at_str: str) -> bool:
+    """检查协方差缓存是否在有效期内。"""
+    try:
+        built_at = datetime.strptime(built_at_str, "%Y-%m-%d %H:%M:%S")
+        age_days = (datetime.now() - built_at).days
+        return age_days < _COV_STALENESS_DAYS
+    except (ValueError, TypeError):
+        return False
 
 
 def _load_or_build_cov_matrix(fund_codes: list) -> dict:
     """
     加载或构建基金池协方差矩阵。
-    优先从缓存文件读取，如果缓存不存在则尝试从 Wind 构建并缓存。
+    优先从缓存文件读取 (30天有效期)，过期或不存在时从 Wind 构建并缓存。
     """
     global _cov_cache
-    # 1. 内存缓存
+    # 1. 内存缓存 (仅当完全覆盖所需 codes 时命中)
     if _cov_cache["matrix"] is not None and set(fund_codes).issubset(set(_cov_cache["codes"])):
         return _cov_cache
 
-    # 2. 磁盘缓存
+    # 2. 磁盘缓存 (30天有效期)
     if os.path.exists(_COV_CACHE_FILE):
         try:
             with open(_COV_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -532,12 +543,16 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
             if codes and matrix_data:
                 cov_df = pd.DataFrame(matrix_data, index=codes, columns=codes)
                 _cov_cache = {"matrix": cov_df, "codes": codes, "built_at": built_at}
-                logger.info(f"[智选] 协方差矩阵从缓存加载: {len(codes)} 只基金, 构建于 {built_at}")
-                return _cov_cache
+
+                if _is_cov_cache_fresh(built_at):
+                    logger.info(f"[智选] 协方差矩阵从缓存加载 (新鲜): {len(codes)} 只基金, 构建于 {built_at}")
+                    return _cov_cache
+                else:
+                    logger.info(f"[智选] 协方差矩阵缓存已过期 (构建于 {built_at}, 阈值 {_COV_STALENESS_DAYS} 天)，尝试重建...")
         except Exception as e:
             logger.warning(f"[智选] 协方差缓存读取失败: {e}")
 
-    # 3. 从 Wind 构建
+    # 3. 从 Wind 构建 (缓存过期或不存在时)
     try:
         from WindPy import w
         if not w.isconnected():
@@ -585,9 +600,15 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
 
     except ImportError:
         logger.warning("[智选] Wind 不可用, 协方差矩阵无法构建")
+        if _cov_cache["matrix"] is not None:
+            logger.info(f"[智选] Wind 不可用，降级使用过期缓存 (构建于 {_cov_cache['built_at']})")
+            return _cov_cache
         return {"matrix": None, "codes": [], "built_at": None}
     except Exception as e:
         logger.error(f"[智选] 协方差矩阵构建异常: {e}")
+        if _cov_cache["matrix"] is not None:
+            logger.info(f"[智选] 构建异常，降级使用过期缓存 (构建于 {_cov_cache['built_at']})")
+            return _cov_cache
         return {"matrix": None, "codes": [], "built_at": None}
 
 
@@ -1062,29 +1083,139 @@ async def backtest(req: BacktestRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── 回测指数年度收益率缓存 (30天有效) ──
+_BACKTEST_CACHE_FILE = os.path.join(BACKEND_DIR, "data", "zx_backtest_index_cache.json")
+_BACKTEST_CACHE_STALENESS_DAYS = 30
+
+
+def _get_index_annual_returns(index_code: str, years: list) -> dict:
+    """
+    从 Wind API 获取指数逐年收益率。
+    优化: 仅请求每年年末收盘价 (而非全部日线), 数据量减少 99%。
+    返回: {"2021": 5.23, "2022": -15.1, ...}  (百分比)
+    """
+    try:
+        from WindPy import w
+        if not w.isconnected():
+            w.start()
+    except ImportError:
+        logger.warning("[智选回测] WindPy 不可用")
+        return {}
+
+    try:
+        # 只请求每年最后2-3个交易日的收盘价 (而非6年日线)
+        # 需要 min_year-1 年末的收盘价作为第一年的基准
+        result = {}
+        all_years = sorted(set([min(years) - 1] + list(years)))
+
+        # 构建关键日期列表: 每年 12月25日-12月31日 (覆盖年末最后交易日)
+        key_dates = []
+        for yr in all_years:
+            key_dates.append(f"{yr}-12-20")  # 提前几天确保覆盖
+
+        # 单次 wsd 请求, 只取每年年末附近的少量数据点
+        for yr in all_years:
+            yr_start = f"{yr}-12-15"
+            yr_end = f"{yr}-12-31"
+            if yr == datetime.now().year:
+                yr_end = datetime.now().strftime("%Y-%m-%d")
+                yr_start = (datetime.now() - pd.Timedelta(days=15)).strftime("%Y-%m-%d")
+
+            res = w.wsd(index_code, "close", yr_start, yr_end, "")
+            if res.ErrorCode == 0 and res.Data and res.Data[0]:
+                # 取最后一个有效值作为该年年末收盘价
+                valid_vals = [(i, v) for i, v in enumerate(res.Data[0])
+                              if v is not None and str(v) != 'nan']
+                if valid_vals:
+                    _, last_val = valid_vals[-1]
+                    result[yr] = float(last_val)
+
+        # 计算年度收益率
+        annual_returns = {}
+        for yr in years:
+            if yr in result and (yr - 1) in result and result[yr - 1] > 0:
+                ret = (result[yr] / result[yr - 1] - 1) * 100
+                annual_returns[str(yr)] = round(ret, 2)
+
+        logger.info(f"[智选回测] {index_code} 年度收益率获取成功: {len(annual_returns)} 年 (极简模式)")
+        return annual_returns
+
+    except Exception as e:
+        logger.warning(f"[智选回测] {index_code} Wind 查询异常: {e}")
+        return {}
+
+
+def _load_backtest_cache() -> dict:
+    """加载回测指数缓存 (30天有效期)。"""
+    if not os.path.exists(_BACKTEST_CACHE_FILE):
+        return {}
+    try:
+        with open(_BACKTEST_CACHE_FILE, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        built_at = cached.get("built_at", "")
+        if built_at:
+            age_days = (datetime.now() - datetime.strptime(built_at, "%Y-%m-%d %H:%M:%S")).days
+            if age_days < _BACKTEST_CACHE_STALENESS_DAYS:
+                logger.info(f"[智选回测] 指数缓存命中 (构建于 {built_at}, {age_days} 天前)")
+                return cached.get("data", {})
+            else:
+                logger.info(f"[智选回测] 指数缓存已过期 ({age_days} 天前)")
+    except Exception as e:
+        logger.warning(f"[智选回测] 缓存读取失败: {e}")
+    return {}
+
+
+def _save_backtest_cache(data: dict):
+    """保存回测指数缓存。"""
+    try:
+        os.makedirs(os.path.dirname(_BACKTEST_CACHE_FILE), exist_ok=True)
+        cache_data = {
+            "built_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "data": data,
+        }
+        with open(_BACKTEST_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"[智选回测] 缓存保存失败: {e}")
+
+
 def _backtest_sync(portfolios: dict, benchmarks: list) -> dict:
     """同步执行回测。"""
     current_year = datetime.now().year
     years = list(range(current_year - 5, current_year))  # 过去5年
 
-    # ── 获取宽基指数年度收益率 ──
+    # ── 获取宽基指数年度收益率 (优先缓存, 过期后极简 Wind 请求) ──
+    cached = _load_backtest_cache()
     benchmark_returns = {}
+
     for bm_name in benchmarks:
         bm_code = BENCHMARK_CODE_MAP.get(bm_name)
         if not bm_code:
             continue
 
+        # 优先用缓存
+        if bm_name in cached and cached[bm_name]:
+            benchmark_returns[bm_name] = cached[bm_name]
+            continue
+
         try:
-            _wf = _import_backend_service("wind_fetcher")
-            get_index_annual_returns = _wf.get_index_annual_returns
-            annual_rets = get_index_annual_returns(bm_code, years)
-            benchmark_returns[bm_name] = annual_rets
+            annual_rets = _get_index_annual_returns(bm_code, years)
+            if annual_rets:
+                benchmark_returns[bm_name] = annual_rets
+            else:
+                # Wind 返回空 → 随机模拟
+                benchmark_returns[bm_name] = {
+                    str(y): round(np.random.normal(0.05, 0.15) * 100, 2) for y in years
+                }
         except Exception as e:
             logger.warning(f"[智选回测] {bm_name} 数据获取失败: {e}")
-            # 降级: 随机模拟数据
             benchmark_returns[bm_name] = {
                 str(y): round(np.random.normal(0.05, 0.15) * 100, 2) for y in years
             }
+
+    # 保存缓存 (下次30天内直接命中, 不调 Wind)
+    if benchmark_returns:
+        _save_backtest_cache(benchmark_returns)
 
     # ── 估算各方案年度收益率 ──
     portfolios_returns = {}

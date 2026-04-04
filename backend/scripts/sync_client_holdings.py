@@ -17,6 +17,7 @@ import os
 import json
 import logging
 import time
+import glob
 
 # Since this script was moved to backend/scripts, but the services are still in 20260325/
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,6 +30,37 @@ logging.basicConfig(
 )
 
 BATCH_SIZE = 5
+MAX_SYNC_FILES_KEEP = 3  # 保留最新的 N 份 sync 文件, 自动清理旧文件
+
+
+def _cleanup_old_sync_files(data_dir: str):
+    """清理旧的 sync_*.csv 文件, 只保留最新的 MAX_SYNC_FILES_KEEP 份。"""
+    try:
+        # 找所有 sync_*.csv (不含 meta)
+        nav_files = sorted(
+            glob.glob(os.path.join(data_dir, "sync_*.csv")),
+            key=os.path.getmtime, reverse=True
+        )
+        nav_only = [f for f in nav_files if '_meta' not in f]
+
+        if len(nav_only) <= MAX_SYNC_FILES_KEEP:
+            return
+
+        to_delete = nav_only[MAX_SYNC_FILES_KEEP:]
+        for f in to_delete:
+            try:
+                os.remove(f)
+                # 同时删除对应的 _meta.csv
+                meta_f = f.replace('.csv', '_meta.csv')
+                if os.path.exists(meta_f):
+                    os.remove(meta_f)
+                logging.info(f"  🗑️ 清理旧 sync 文件: {os.path.basename(f)}")
+            except Exception as e:
+                logging.warning(f"  ⚠️ 清理失败 {os.path.basename(f)}: {e}")
+
+        logging.info(f"  ✅ 已清理 {len(to_delete)} 份旧 sync 文件, 保留最新 {MAX_SYNC_FILES_KEEP} 份")
+    except Exception as e:
+        logging.warning(f"  ⚠️ sync 文件清理异常 (非致命): {e}")
 
 
 def main():
@@ -49,6 +81,8 @@ def main():
         from datetime import datetime, timedelta
         from services.wind_fetcher import init_wind
 
+        tushare_used = False
+
         w = init_wind()
         if w is None:
             raise RuntimeError("Wind 连接失败，请确保 Wind 终端已启动")
@@ -60,11 +94,16 @@ def main():
         out_dir = os.path.dirname(output_path)
         os.makedirs(out_dir, exist_ok=True)
 
+        # 自动清理旧 sync 文件 (仅保留最新 3 份)
+        _cleanup_old_sync_files(out_dir)
+
         # ══════════════════════════════════════════
         # 1. 分批下载复权净值
         # ══════════════════════════════════════════
         all_nav_dfs = []
         failed_codes = []
+        is_quota_exceeded = False
+
         # Wind w.wsd 也需要 .OF 后缀, 否则返回全 NaN
         _wsd_codes = [c + '.OF' if '.' not in c else c for c in codes]
         for batch_i in range(0, len(_wsd_codes), BATCH_SIZE):
@@ -75,6 +114,8 @@ def main():
                 nav_data = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
                 if nav_data.ErrorCode != 0:
                     logging.warning(f"  ⚠️ 批次 {batch_label} 净值失败: {nav_data.ErrorCode}")
+                    if nav_data.ErrorCode == -40522017:
+                        is_quota_exceeded = True
                     failed_codes.extend(batch)
                     continue
                 if len(batch) == 1:
@@ -91,9 +132,32 @@ def main():
                 logging.warning(f"  ⚠️ 批次 {batch_label} 异常: {e}")
                 failed_codes.extend(batch)
 
+        # ── Wind NAV 失败 → Tushare 兜底 ──
+        if is_quota_exceeded or not all_nav_dfs:
+            logging.warning("⚠️ Wind NAV 下载失败或配额不足, 启用 Tushare 兜底...")
+            print("__TUSHARE_STARTED__", flush=True)
+            try:
+                from tushare_fetcher import fetch_fund_nav
+                bare_codes = [c.split('.')[0].zfill(6) for c in codes]
+                df_ts_nav = fetch_fund_nav(bare_codes, start_date, end_date)
+                if not df_ts_nav.empty:
+                    all_nav_dfs.append(df_ts_nav)
+                    logging.info(f"  ✅ Tushare NAV 兜底成功: {len(df_ts_nav.columns)} 只基金, {len(df_ts_nav)} 天")
+                    is_quota_exceeded = False  # 已被 Tushare 救回
+                    tushare_used = True
+                else:
+                    logging.warning("  ⚠️ Tushare NAV 也返回空")
+            except Exception as e_ts:
+                logging.warning(f"  ⚠️ Tushare NAV 兜底异常: {e_ts}")
+
+        if is_quota_exceeded:
+            raise RuntimeError("Wind 和 Tushare 均无法获取 NAV 数据。Wind 配额已超限 (ErrorCode: -40522017)，Tushare 也未能兜底。")
+
         if not all_nav_dfs:
-            raise RuntimeError("所有批次均失败，无法获取任何净值数据")
+            raise RuntimeError("所有数据源均失败，无法获取任何净值数据")
         df_nav = pd.concat(all_nav_dfs, axis=1)
+        # 去重: 如果 Wind 和 Tushare 都返回了同一只基金, 保留第一列
+        df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
         success_codes = list(df_nav.columns)
 
         # ══════════════════════════════════════════
@@ -175,6 +239,28 @@ def main():
             df_meta.index = [str(c).split('.')[0].zfill(6) for c in df_meta.index]
         if _meta_failed_codes:
             logging.warning(f"⚠️ 以下基金元数据最终获取失败: {_meta_failed_codes}")
+
+        # ── Wind 元数据缺失 → Tushare 兜底 ──
+        _meta_missing = [c for c in success_codes if c not in (df_meta.index if not df_meta.empty else [])]
+        if _meta_missing or df_meta.empty:
+            _ts_target = _meta_missing if _meta_missing else success_codes
+            logging.info(f"🔄 Tushare 元数据兜底: {len(_ts_target)} 只基金...")
+            print("__TUSHARE_STARTED__", flush=True)
+            try:
+                from tushare_fetcher import fetch_fund_metadata
+                df_ts_meta = fetch_fund_metadata(_ts_target)
+                if not df_ts_meta.empty:
+                    if df_meta.empty:
+                        df_meta = df_ts_meta
+                    else:
+                        # 合并: 只补充缺失的
+                        for idx in df_ts_meta.index:
+                            if idx not in df_meta.index:
+                                df_meta = pd.concat([df_meta, df_ts_meta.loc[[idx]]])
+                    logging.info(f"  ✅ Tushare 元数据兜底成功: {len(df_ts_meta)} 只")
+                    tushare_used = True
+            except Exception as e_ts:
+                logging.warning(f"  ⚠️ Tushare 元数据兜底异常: {e_ts}")
 
         # ══════════════════════════════════════════
         # 2.5 持仓综合分析表 — 全部直取 Wind API
@@ -261,6 +347,72 @@ def main():
                 logging.info("  ✅ 年化波动率(三年期) + 最大回撤(三年期) WSS 完成")
         except Exception as e:
             logging.warning(f"  ⚠️ vol/mdd WSS 异常: {e}")
+
+        # ── 2.5a-Fallback: 如果 Wind 取不到周期/年度回报, 使用 df_nav 本地计算兜底 ──
+        if not df_nav.empty:
+            logging.info("  🔄 检查本地区间收益率兜底...")
+            df_nav_daily = df_nav.copy()
+            df_nav_daily.index = pd.to_datetime(df_nav_daily.index)
+            # 根据最后一个交易日基准进行倒推
+            _last_dt_overall = df_nav_daily.index.max()
+            
+            for code in df_nav_daily.columns:
+                bare = str(code).split('.')[0].zfill(6)
+                s = df_nav_daily[code].dropna()
+                if s.empty: continue
+                
+                s_last_dt = s.index[-1]
+                s_last_val = float(s.iloc[-1])
+                s_dict = _summary_data.setdefault(bare, {})
+                
+                # 年度 return_y 兜底 (2020 至今)
+                for yr in _years:
+                    yr_key = f"ret_{yr}"
+                    if yr_key not in s_dict:
+                        try:
+                            # 提取当年的数据
+                            s_yr = s[s.index.year == yr]
+                            if not s_yr.empty:
+                                val_end = float(s_yr.iloc[-1])
+                                # 提取上一年及以前的最后一天
+                                s_prev = s[s.index.year < yr]
+                                if not s_prev.empty:
+                                    val_start = float(s_prev.iloc[-1])
+                                    s_dict[yr_key] = (val_end / val_start) - 1.0
+                        except Exception:
+                            pass
+                
+                # YTD 兜底
+                if 'ret_ytd' not in s_dict:
+                    try:
+                        s_prev = s[s.index.year < s_last_dt.year]
+                        if not s_prev.empty:
+                            s_dict['ret_ytd'] = (s_last_val / float(s_prev.iloc[-1])) - 1.0
+                    except Exception:
+                        pass
+                
+                # 周期回报兜底 (6M, 1Y, 3Y, 5Y)
+                # 使用 timedelta 做粗略计算 (182, 365, 1095, 1826)
+                _cycle_map = [(182, 'ret_6m'), (365, 'ret_1y'), (1095, 'ret_3y'), (1826, 'ret_5y')]
+                for days, key in _cycle_map:
+                    if key not in s_dict:
+                        ago_dt = s_last_dt - timedelta(days=days)
+                        past_vals = s[:ago_dt.strftime('%Y-%m-%d')]
+                        if not past_vals.empty:
+                            s_dict[key] = (s_last_val / float(past_vals.iloc[-1])) - 1.0
+                
+                # 波动率与回撤兜底 (3年)
+                if 'vol_3y' not in s_dict or 'max_dd_3y' not in s_dict:
+                    try:
+                        dt_3y = s_last_dt - timedelta(days=1095)
+                        s_3y = s[dt_3y.strftime('%Y-%m-%d'):]
+                        if len(s_3y) > 100:
+                            if 'vol_3y' not in s_dict:
+                                s_dict['vol_3y'] = float(s_3y.pct_change().std() * (252**0.5))
+                            if 'max_dd_3y' not in s_dict:
+                                s_dict['max_dd_3y'] = float(abs((s_3y / s_3y.cummax() - 1.0).min()))
+                    except Exception:
+                        pass
 
         # --- 诊断统计 ---
         _got_ret = sum(1 for c, v in _summary_data.items() if any(k.startswith("ret_") for k in v))
@@ -581,6 +733,24 @@ def main():
 
             logging.info(f"  ✅ wsd 7天最大跌幅完成: {_drop_count}/{len(_und_list)} 只")
 
+            # ── Step 4c: Tushare 兜底 — 对 Wind 未获取到的底层股票补充数据 ──
+            _stk_missing = [stk for stk in _und_list if stk not in underlying_pct or underlying_pct[stk].get('pct_chg', 0.0) == 0.0]
+            if _stk_missing:
+                logging.info(f"  🔄 Tushare 底层行情兜底: {len(_stk_missing)} 只...")
+                print("__TUSHARE_STARTED__", flush=True)
+                try:
+                    from tushare_fetcher import fetch_stock_pct_chg
+                    ts_result = fetch_stock_pct_chg(_stk_missing, _7d_ago, _today_str)
+                    _ts_filled = 0
+                    for stk, data in ts_result.items():
+                        if data.get('pct_chg', 0.0) != 0.0 or data.get('daily_pcts'):
+                            underlying_pct[stk] = data
+                            _ts_filled += 1
+                    logging.info(f"  ✅ Tushare 底层行情兜底: {_ts_filled}/{len(_stk_missing)} 只补充成功")
+                    tushare_used = True
+                except Exception as e_ts:
+                    logging.warning(f"  ⚠️ Tushare 底层行情兜底异常: {e_ts}")
+
         # ══════════════════════════════════════════
         # 5. 保存所有数据
         # ══════════════════════════════════════════
@@ -665,6 +835,7 @@ def main():
             "failed_codes": failed_codes[:10],
             "n_holdings": sum(len(v) for v in holdings_map.values()),
             "n_underlying": len(underlying_pct),
+            "tushare_used": tushare_used,
         })
         sys.exit(0)
 

@@ -45,7 +45,7 @@ import threading
 import queue as _queue
 
 class _WindMarketDaemon:
-    """Wind COM 必须在同一线程调用 start() 和 wss()。使用专属守护线程。"""
+    """Wind COM 必须在同一线程调用 start() 和所有 API。使用专属守护线程。"""
     def __init__(self):
         self._q = _queue.Queue()
         self._w = None
@@ -93,9 +93,10 @@ class _WindMarketDaemon:
                     continue
                 if item is None:
                     break
-                args, kwargs, result_q = item
+                method_name, args, kwargs, result_q = item
                 try:
-                    result = self._w.wss(*args, **kwargs)
+                    method = getattr(self._w, method_name)
+                    result = method(*args, **kwargs)
                     result_q.put(('ok', result))
                 except Exception as e:
                     result_q.put(('error', e))
@@ -108,19 +109,28 @@ class _WindMarketDaemon:
             self._error = str(e)
             self._ready.set()
 
-    def wss(self, *args, **kwargs):
+    def _call(self, method_name, *args, **kwargs):
         if self._w is None:
             return None
         result_q = _queue.Queue()
-        self._q.put((args, kwargs, result_q))
+        self._q.put((method_name, args, kwargs, result_q))
         try:
             status, result = result_q.get(timeout=30)
             if status == 'error':
                 raise result
             return result
         except _queue.Empty:
-            logger.error("Wind wss 超时 (30s)")
+            logger.error(f"Wind {method_name} 超时 (30s)")
             return None
+
+    def wss(self, *args, **kwargs):
+        return self._call('wss', *args, **kwargs)
+
+    def wsd(self, *args, **kwargs):
+        return self._call('wsd', *args, **kwargs)
+
+    def wsq(self, *args, **kwargs):
+        return self._call('wsq', *args, **kwargs)
 
     @property
     def is_connected(self):
@@ -154,7 +164,7 @@ def _get_wind_direct():
 async def get_market_quotes():
     """
     获取 7 大宽基指数实时行情 (5 分钟缓存)。
-    使用 w.wss(codes, "close,pct_chg", "PriceAdj=F") 精确获取收盘价和涨跌幅。
+    由于 WSD 历史额度容易耗尽 (-40522017)，改为使用 w.wsq 实时快照接口 (不耗历史额度)。
     """
     global _market_quotes_cache, _market_quotes_ts
 
@@ -173,51 +183,68 @@ async def get_market_quotes():
 
     try:
         codes_list = [idx["code"] for idx in MARKET_INDICES]
-        logger.info(f"📡 正在从 Wind 拉取市场行情: {len(codes_list)} 个指数...")
-        data = w.wss(codes_list, "close,pct_chg", "PriceAdj=F")
+        codes_str = ",".join(codes_list)
+        logger.info(f"📡 正在从 Wind 拉取市场行情 (wsq): {len(codes_list)} 个指数...")
+
+        # wsq 接口不耗费 wsd 历史配额, 返回 [rt_last, rt_pct_chg]
+        data = w.wsq(codes_str, "rt_last,rt_pct_chg")
 
         if data is None:
-            logger.warning("Wind wss 返回 None (可能超时)")
+            logger.warning("Wind wsq 返回 None (可能超时)")
             if _market_quotes_cache:
                 return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
                         "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S")}
-            return {"status": "error", "quotes": [], "message": "Wind wss 超时"}
+            return {"status": "error", "quotes": [], "message": "Wind wsq 超时"}
 
         quotes = []
         if data.ErrorCode == 0 and data.Data:
+            logger.info(f"📡 Wind wsq 返回成功数据: rt_last={data.Data[0][:3]}...")
+
             for j, idx in enumerate(MARKET_INDICES):
                 close_val = None
                 pct_val = None
+
                 try:
-                    raw_close = data.Data[0][j] if len(data.Data) > 0 and j < len(data.Data[0]) else None
-                    close_val = float(raw_close) if raw_close is not None and str(raw_close) != 'nan' else None
-                except (ValueError, TypeError):
-                    close_val = None
-                try:
-                    raw_pct = data.Data[1][j] if len(data.Data) > 1 and j < len(data.Data[1]) else None
-                    pct_val = float(raw_pct) if raw_pct is not None and str(raw_pct) != 'nan' else None
-                except (ValueError, TypeError):
-                    pct_val = None
+                    # wsq 返回各列数据 (第0列为 rt_last, 第1列为 rt_pct_chg)
+                    val_last = data.Data[0][j] if j < len(data.Data[0]) else None
+                    val_pct = data.Data[1][j] if len(data.Data) > 1 and j < len(data.Data[1]) else None
+
+                    if val_last is not None and str(val_last) not in ('nan', 'None', ''):
+                        close_val = float(val_last)
+
+                    if val_pct is not None and str(val_pct) not in ('nan', 'None', ''):
+                        # Wind wsq rt_pct_chg 直接返回 百分比数值 (0.015表示涨幅 1.5%)
+                        # 而我们的 UI 期望直接展示 1.5，需要乘以 100
+                        pct_val = float(val_pct) * 100.0
+
+                except Exception as e:
+                    logger.warning(f"解析 {idx['code']} 行情异常: {e}")
 
                 quotes.append({
                     "code": idx["code"],
                     "name": idx["name"],
                     "en": idx["en"],
-                    "close": round(close_val, 2) if close_val else None,
-                    "pct_chg": round(pct_val, 2) if pct_val else None,
+                    "close": round(close_val, 2) if close_val is not None else None,
+                    "pct_chg": round(pct_val, 2) if pct_val is not None else None,
                 })
 
             _market_quotes_cache = quotes
             _market_quotes_ts = now
-            logger.info(f"✅ 市场行情更新: {len(quotes)} 个指数")
+            n_valid = sum(1 for q in quotes if q["close"] is not None)
+            logger.info(f"✅ 市场行情更新: {n_valid}/{len(quotes)} 个指数有有效数据")
             return {"status": "success", "quotes": quotes, "cached": False,
                     "updated_at": now.strftime("%H:%M:%S")}
         else:
-            logger.warning(f"Wind WSS 市场行情失败: ErrorCode={data.ErrorCode}, Data={data.Data}")
+            logger.warning(f"Wind WSQ 市场行情失败: ErrorCode={data.ErrorCode}")
+            # 如果 wsq 因为配额或其他原因彻底死掉 (-40522017) 则明确提示 UI
+            msg = f"ErrorCode={data.ErrorCode}"
+            if data.ErrorCode == -40522017:
+                msg = "行情配额已耗尽(ErrorCode=-40522017)"
+
             if _market_quotes_cache:
                 return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
-                        "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S")}
-            return {"status": "error", "quotes": [], "message": f"Wind ErrorCode={data.ErrorCode}"}
+                        "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S"), "warning": msg}
+            return {"status": "error", "quotes": [], "message": msg}
 
     except Exception as e:
         logger.error(f"市场行情获取异常: {e}")
@@ -520,17 +547,26 @@ def run_sync_script(task_id: str, fund_codes: List[str]):
         env = os.environ.copy()
         env["PYTHONPATH"] = backend_dir + os.pathsep + env.get("PYTHONPATH", "")
 
-        process = subprocess.run(
+        process = subprocess.Popen(
             ["python", script_path, codes_str, out_csv],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
+            errors="replace",
             env=env,
         )
 
-        # 解析输出里包含的 JSON
+        out_lines = []
         result_payload = {}
-        out_text = process.stdout
+        for line in iter(process.stdout.readline, ""):
+            out_lines.append(line)
+            if "__TUSHARE_STARTED__" in line:
+                _tasks_status[task_id]["message"] = "Tushare 下载数据中..."
+
+        process.stdout.close()
+        returncode = process.wait()
+        out_text = "".join(out_lines)
 
         if "__CLIENT_SYNC_RESULT_START__" in out_text and "__CLIENT_SYNC_RESULT_END__" in out_text:
             try:
@@ -541,7 +577,7 @@ def run_sync_script(task_id: str, fund_codes: List[str]):
             except Exception as e:
                 logger.error(f"Task {task_id} JSON 解析失败: {e}")
 
-        if process.returncode == 0 and result_payload.get("status") == "success":
+        if returncode == 0 and result_payload.get("status") == "success":
             # ── 计算增强诊断数据 ──
             fund_summary = {}
             alerts = {"manager_alerts": [], "crash_alerts": [], "drift_alerts": [], "total_alerts": 0}
@@ -563,17 +599,20 @@ def run_sync_script(task_id: str, fund_codes: List[str]):
                     "alerts": alerts,
                 },
             }
+            is_ts = result_payload.get("tushare_used", False)
+            msg = "⚡ Tushare 数据拉取成功！" if is_ts else "Wind 数据拉取成功！"
+
             _tasks_status[task_id] = {
                 "status": "success",
-                "message": "Wind 数据拉取成功！",
+                "message": msg,
                 "result": api_data,
             }
         else:
-            logger.error(f"Task {task_id} sync failed! Stdout:\n{process.stdout}\nStderr:\n{process.stderr}")
+            logger.error(f"Task {task_id} sync failed! Stdout:\n{out_text}")
             error_detail = result_payload.get("detail", "底层进程发生异常或 WindPy 连接超时。")
             _tasks_status[task_id] = {
                 "status": "error",
-                "message": f"拉取失败: {error_detail}",
+                "message": f"底层数据拉取失败: {error_detail}",
                 "result": None,
             }
 
@@ -735,4 +774,3 @@ async def fund_news_review(req: FundNewsReviewRequest):
             "review": f"# 投资组合表现月度回顾（{today_str}）\n\n生成失败: {str(e)}",
             "source": "error",
         }
-

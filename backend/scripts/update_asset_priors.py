@@ -215,9 +215,47 @@ def print_summary(priors: dict):
     print("=" * 70)
 
 
+STALENESS_DAYS = 30  # 数据新鲜度阈值: 30天内不重复拉取
+
+
+def _is_data_fresh(force: bool = False) -> bool:
+    """检查 asset_priors.json 是否在 STALENESS_DAYS 天内更新过。"""
+    if force:
+        print("⚡ 强制更新模式 (--force)，跳过新鲜度检查")
+        return False
+
+    if not os.path.exists(OUTPUT_FILE):
+        print("📂 asset_priors.json 不存在，需要首次构建")
+        return False
+
+    try:
+        with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        updated_at = data.get("updated_at", "")
+        if not updated_at:
+            return False
+        last_update = datetime.fromisoformat(updated_at)
+        age_days = (datetime.now() - last_update).days
+        if age_days < STALENESS_DAYS:
+            print(f"✅ 数据仍然新鲜 (上次更新: {updated_at}, {age_days} 天前, 阈值: {STALENESS_DAYS} 天)")
+            print(f"   跳过 Wind API 调用，节省配额。如需强制更新请使用: python {os.path.basename(__file__)} --force")
+            return True
+        else:
+            print(f"📅 数据已过期 ({age_days} 天前更新, 阈值: {STALENESS_DAYS} 天)，开始更新...")
+            return False
+    except Exception as e:
+        print(f"⚠️ 新鲜度检查失败 ({e})，继续更新")
+        return False
+
+
 def main():
+    force = "--force" in sys.argv
     print("🚀 开始更新八大类资产波动率先验和相关矩阵...")
     print(f"   时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # 0. 月度新鲜度门控 — 30天内不重复拉取 Wind API
+    if _is_data_fresh(force):
+        return None
     
     # 1. 加载基金池
     pool_by_class = load_fund_pool()
@@ -242,7 +280,8 @@ def main():
     print("\n🧮 计算先验参数...")
     priors = compute_priors(df_class_returns)
     
-    # 5. 保存
+    # 5. 保存 (带时间戳, 供新鲜度检查使用)
+    priors["updated_at"] = datetime.now().isoformat()
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         json.dump(priors, f, ensure_ascii=False, indent=2)
