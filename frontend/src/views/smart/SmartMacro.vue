@@ -142,7 +142,7 @@
           <!-- Scenario A - Highlighted -->
           <div v-if="result.scenario_type === 'A'" class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#46607f] ring-2 ring-[#46607f]/5">
             <div class="flex justify-between items-center mb-2">
-              <span class="text-[9px] font-black text-[#46607f] tracking-[0.2em] uppercase">情景 A — 活动建议</span>
+              <span class="text-[10px] font-black text-[#46607f] tracking-[0.2em] uppercase">情景 A — 活动建议</span>
               <span class="material-symbols-outlined text-[#46607f] text-lg" data-icon="check_circle" style="font-variation-settings: 'FILL' 1;">check_circle</span>
             </div>
             <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
@@ -151,28 +151,48 @@
           </div>
           
           <!-- Scenario B - Highlighted -->
-          <div v-else class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#9f403d] ring-2 ring-[#9f403d]/5">
+          <div v-else-if="result.scenario_type === 'B'" class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#f59e0b] ring-2 ring-[#f59e0b]/5">
             <div class="flex justify-between items-center mb-2">
-              <span class="text-[9px] font-black text-[#9f403d] tracking-[0.2em] uppercase">情景 B — 自动防御</span>
-              <span class="material-symbols-outlined text-[#9f403d] text-lg" data-icon="warning_amber" style="font-variation-settings: 'FILL' 1;">warning_amber</span>
+              <span class="text-[10px] font-black text-[#f59e0b] tracking-[0.2em] uppercase">情景 B — 自动防御</span>
+              <span class="material-symbols-outlined text-[#f59e0b] text-lg" data-icon="warning_amber" style="font-variation-settings: 'FILL' 1;">warning_amber</span>
             </div>
             <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
-              波动率无法覆盖高收益目标。已降级为 1 套稳健配置，以波动率为锚点。
+              可承受波动率不足以覆盖目标收益。已降级为 1 套稳健配置，以波动率为刚性约束锚点。
+            </p>
+          </div>
+
+          <!-- Scenario C - Highlighted -->
+          <div v-else-if="result.scenario_type === 'C'" class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#9f403d] ring-2 ring-[#9f403d]/5">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-[10px] font-black text-[#9f403d] tracking-[0.2em] uppercase">情景 C — 激进边界</span>
+              <span class="material-symbols-outlined text-[#9f403d] text-lg" data-icon="error_outline" style="font-variation-settings: 'FILL' 1;">error_outline</span>
+            </div>
+            <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
+              目标收益过高且脱离有效前沿上限。已自动匹配当前环境下的合法全局最大暴露度方案。
             </p>
           </div>
 
           <!-- Inactive Scenarios (Visual only) -->
           <div class="flex-grow flex flex-col gap-2">
-            <div v-if="result.scenario_type !== 'A'" class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
-              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 A</span>
+            <div v-if="result.scenario_type !== 'A'" class="bg-[#ffffff]/50 p-2.5 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <div class="flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 A — 活动建议</span>
+                <span class="text-[9px] text-[#737c7f]/80">波动率约束可满足收益目标。</span>
+              </div>
               <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
             </div>
-            <div v-if="result.scenario_type !== 'B'" class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
-              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 B</span>
+            <div v-if="result.scenario_type !== 'B'" class="bg-[#ffffff]/50 p-2.5 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <div class="flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 B — 自动防御</span>
+                <span class="text-[9px] text-[#737c7f]/80">波动不够覆盖收益，保守适配。</span>
+              </div>
               <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
             </div>
-            <div class="bg-[#ffffff]/50 p-3 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
-              <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 C</span>
+            <div v-if="result.scenario_type !== 'C'" class="bg-[#ffffff]/50 p-2.5 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
+              <div class="flex flex-col gap-1">
+                <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 C — 激进边界</span>
+                <span class="text-[9px] text-[#737c7f]/80">目标脱离前沿边界，强制匹配最高风险。</span>
+              </div>
               <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
             </div>
           </div>

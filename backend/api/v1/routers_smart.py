@@ -217,24 +217,96 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     get_current_macro_regime_mock = _me.get_current_macro_regime_mock
 
     # ── Step 1: EDB 数据下载 + 因子评分 ──
-    logger.info("[智选] Step 1: EDB 宏观数据下载...")
-    macro_data = fetch_macro_factors()
-    val_data = fetch_valuation_factors()
-    risk_data = fetch_risk_momentum_factors()
-    derived = calculate_derived_factors(macro_data, val_data)
-    scores = calculate_factor_scores(macro_data, val_data, risk_data, derived)
+    logger.info("[智选] Step 1: 极速探测 Wind 连接状态...")
+    
+    wind_actually_alive = False
+    
+    def _wind_probe_task():
+        try:
+            from WindPy import w
+            if not w.isconnected():
+                return False
+            # wsd 才能真正查出历史额度是否耗尽
+            probe = w.wsd("000001.SH", "close", "ED-1TD", "ED-1TD", "")
+            return probe.ErrorCode == 0
+        except Exception:
+            return False
 
-    if not scores:
-        scores = {
-            "composite_score": 0.5, "market_state": "Recovery",
-            "macro_total": 0.4, "valuation_total": 0.3, "risk_total": 0.3,
-        }
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(_wind_probe_task)
+        try:
+            # 严格限制最多等 3 秒！如果不返回直接认定死亡。
+            wind_actually_alive = future.result(timeout=3.0)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[智选] Wind 探针超时 (额度告警或死锁)! 强制放弃 Wind 判定！")
+            wind_actually_alive = False
+        except Exception as e:
+            logger.warning(f"[智选] Wind 探针异常: {e}")
+            wind_actually_alive = False
+
+    scores = None
+    if wind_actually_alive:
+        logger.info("[智选] Wind 状态健康, 开始抓取宏观数据...")
+        macro_data = fetch_macro_factors()
+        val_data = fetch_valuation_factors()
+        risk_data = fetch_risk_momentum_factors()
+        
+        # 二次检查: 确保不是被抛出的一堆兜底 0.0
+        if macro_data and isinstance(macro_data, dict):
+            if any(abs(v) > 0.0001 for v in macro_data.values() if isinstance(v, (int, float))):
+                derived = calculate_derived_factors(macro_data, val_data)
+                scores = calculate_factor_scores(macro_data, val_data, risk_data, derived)
+            else:
+                wind_actually_alive = False
+                logger.warning("[智选] Wind 探针通过, 但宏观数据抓取全部为 0.0, 判定失效.")
+        else:
+            wind_actually_alive = False
+            
+    is_wind_alive = bool(wind_actually_alive and scores and scores.get("composite_score") is not None)
+    
+    if is_wind_alive:
+        hmm_result = get_current_macro_regime_mock() # 默认
+        _composite = scores.get("composite_score", 0.5)
+        _macro_t = scores.get("macro_total", 0)
+        _val_t = scores.get("valuation_total", 0)
+    else:
+        logger.info("[智选] Wind 不可用，触发 Tushare Markov Engine 真实兜底...")
+        try:
+            from services.markov_engine import get_current_macro_regime_live
+            hmm_result = get_current_macro_regime_live()
+            z = hmm_result.get("latest_zscores", {})
+            import math
+            pmi_score = math.tanh(z.get("PMI", 0) / 2.0)
+            m2_score = math.tanh(z.get("M2_Growth", 0) / 2.0)
+            cpi_score = math.tanh(z.get("CPI_YoY", 0) / 2.0)
+            credit_score = math.tanh(z.get("Credit_Impulse", 0) / 2.0)
+            
+            _macro_t = (pmi_score + m2_score + credit_score) / 3.0
+            _val_t = -cpi_score / 2.0
+            risk_tot = (pmi_score - cpi_score) / 2.0
+            _composite = (_macro_t + _val_t + risk_tot) / 3.0
+            
+            # Map HMM regime to market_state string
+            reg_map = {"recovery": "Recovery", "overheat": "Overheat", "stagflation": "Stagflation", "deflation": "Deflation"}
+            _m_state = reg_map.get(hmm_result.get("current_regime", "deflation"), "Deflation")
+            
+            scores = {
+                "composite_score": _composite, 
+                "macro_total": _macro_t, 
+                "valuation_total": _val_t,
+                "risk_total": risk_tot,
+                "market_state": _m_state
+            }
+            logger.info(f"[智选] 成功使用 Tushare 生成替代宏观因子 {_composite:.3f}")
+        except Exception as e:
+            import traceback
+            logger.warning(f"[智选] Tushare 兜底失败: {e}\n{traceback.format_exc()}")
+            hmm_result = get_current_macro_regime_mock()
+            scores = {"composite_score": 0.5, "macro_total": 0.4, "valuation_total": 0.3, "risk_total": 0.3, "market_state": "Recovery"}
+            _composite, _macro_t, _val_t = 0.5, 0.4, 0.3
 
     # ── Step 2: 宏观象限定位 ──
-    _composite = scores.get("composite_score", 0.5)
-    _macro_t = scores.get("macro_total", 0)
-    _val_t = scores.get("valuation_total", 0)
-
     factor_scores_6 = {
         "经济增长": round(float(_macro_t * 2), 3),
         "通胀商品": round(float(-_val_t * 1.5), 3),
@@ -245,9 +317,14 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     }
 
     current_q = determine_quadrant(factor_scores_6)
+    
+    # 强行对齐 HMM 的象限状态，增强一致性
+    quad_map = {"recovery": "recovery", "overheat": "overheat", "stagflation": "stagflation", "deflation": "deflation"}
+    if not is_wind_alive and hmm_result.get("current_regime"):
+        current_q = quad_map.get(hmm_result["current_regime"], current_q)
+
     q_info = QUADRANT_DEFINITIONS[current_q]
     asset_signals = factor_scores_to_asset_expected_returns(factor_scores_6, apply_regime=True)
-    hmm_result = get_current_macro_regime_mock()
 
     # ── Step 3 & 4: 独立象限权重和多情景判定 ──
     _frp = _import_backend_service("factor_risk_parity")
@@ -334,7 +411,30 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         for alloc in sc["allocations"]:
             all_codes.add(alloc["code"])
             
-    wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
+    if wind_actually_alive:
+        wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
+    else:
+        _pm = _import_backend_service("product_mapping")
+        TRUST_PRODUCT_MAPPING = _pm.TRUST_PRODUCT_MAPPING
+        
+        def _get_fallback_profile(code, mapping):
+            clean = code.split(".")[0]
+            fname = "暂无"
+            fscale = "暂无"
+            for ac, products in mapping.items():
+                for item in products.get("公募基金", []):
+                    if item[0].split(".")[0] == clean:
+                        fname = item[1]
+                        fscale = f"{float(item[2]):.2f}" if len(item) > 2 else "暂无"
+                        break
+            return {
+                "code": code, "name": fname, "mgrname": "暂无", "setupdate": "暂无",
+                "scale": fscale, "navytd": "暂无", "nav1y": "暂无", "nav3y": "暂无",
+                "volatility": "暂无", "maxdrawdown": "暂无", "sharpe": "暂无"
+            }
+        wind_data = {}
+        for cd in all_codes:
+            wind_data[cd] = _get_fallback_profile(cd, TRUST_PRODUCT_MAPPING)
     
     # 将基金档案附到每个方案，并用真实 NAV 数据覆盖 KPI
     period_map = {"半年": 1, "1年": 1, "3年": 3}
@@ -352,26 +452,25 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         
         # ── 用真实 NAV 数据计算组合级 KPI (覆盖静态估算) ──
         try:
+            # 无论 Wind 是否连通，都调用 compute_portfolio_metrics (内部会平滑 fallback 到 Tushare)
             real_metrics = wind_service.compute_portfolio_metrics(
                 sc["allocations"], period_years=period_years
             )
-            if real_metrics.get("source") == "wind":
+                
+            if real_metrics.get("source") in ["wind", "tushare"]:
                 # 保留优化器的目标收益率作为"预期"，波动率、回撤、夏普用真实数据
                 sc["kpi"]["ann_vol_pct"] = real_metrics["ann_vol_pct"]
                 sc["kpi"]["max_drawdown_pct"] = real_metrics["max_drawdown_pct"]
                 sc["kpi"]["sharpe"] = real_metrics["sharpe"]
-                sc["kpi"]["_source"] = "wind"
+                sc["kpi"]["_source"] = real_metrics.get("source")
                 sc["kpi"]["_data_points"] = real_metrics.get("data_points", 0)
                 sc["kpi"]["_valid_funds"] = real_metrics.get("valid_funds", 0)
-                logger.info(f"[智选] {sc['name']} KPI 已用 Wind 真实数据覆盖: "
+                logger.info(f"[智选] {sc['name']} KPI 已用 {real_metrics.get('source')} 真实数据覆盖: "
                            f"vol={real_metrics['ann_vol_pct']}%, dd={real_metrics['max_drawdown_pct']}%")
             else:
-                # Wind 不可用 → 显示 N/A
-                sc["kpi"]["ann_vol_pct"] = "N/A"
-                sc["kpi"]["max_drawdown_pct"] = "N/A"
-                sc["kpi"]["sharpe"] = "N/A"
-                sc["kpi"]["_source"] = "unavailable"
-                logger.info(f"[智选] {sc['name']} Wind 不可用, KPI 波动率/回撤显示 N/A")
+                # API 兜底也失败 → 直接保留 _build_scenario 预先算好的 HRP 理论估算值
+                sc["kpi"]["_source"] = "Tushare / HRP 理论值"
+                logger.info(f"[智选] {sc['name']} 所有外部数据源不可用, KPI 回退并保留为理论模型值")
         except Exception as e:
             sc["kpi"]["ann_vol_pct"] = "N/A"
             sc["kpi"]["max_drawdown_pct"] = "N/A"
@@ -740,20 +839,20 @@ def _tactical_oneclick_sync(
 
 
 def _compute_real_kpi(wind_service, allocations_list: list, period_years: float) -> dict:
-    """用 Wind 真实数据计算 KPI, 失败则用估算值兜底。"""
+    """用 Wind/Tushare 真实数据计算 KPI, 失败则用估算值兜底。"""
     try:
         metrics = wind_service.compute_portfolio_metrics(allocations_list, period_years=int(max(1, period_years)))
-        if metrics.get("source") == "wind":
+        if metrics.get("source") in ["wind", "tushare"]:
             return {
                 "ann_return_pct": metrics.get("ann_return_pct", "N/A"),
                 "ann_vol_pct": metrics.get("ann_vol_pct", "N/A"),
                 "max_drawdown_pct": metrics.get("max_drawdown_pct", "N/A"),
                 "sharpe": metrics.get("sharpe", "N/A"),
-                "source": "wind",
+                "source": metrics.get("source"),
                 "data_points": metrics.get("data_points", 0),
             }
     except Exception as e:
-        logger.warning(f"[智选] Wind KPI 计算失败: {e}")
+        logger.warning(f"[智选] KPI 计算失败: {e}")
 
     return {
         "ann_return_pct": "N/A", "ann_vol_pct": "N/A",
@@ -1096,22 +1195,19 @@ def _get_index_annual_returns(index_code: str, years: list) -> dict:
     """
     try:
         from WindPy import w
-        if not w.isconnected():
+        wind_available = w.isconnected()
+        if not wind_available:
             w.start()
+            wind_available = w.isconnected()
     except ImportError:
-        logger.warning("[智选回测] WindPy 不可用")
-        return {}
+        logger.warning("[智选回测] WindPy 不可用，将完全使用 Tushare")
+        wind_available = False
 
     try:
         # 只请求每年最后2-3个交易日的收盘价 (而非6年日线)
         # 需要 min_year-1 年末的收盘价作为第一年的基准
         result = {}
         all_years = sorted(set([min(years) - 1] + list(years)))
-
-        # 构建关键日期列表: 每年 12月25日-12月31日 (覆盖年末最后交易日)
-        key_dates = []
-        for yr in all_years:
-            key_dates.append(f"{yr}-12-20")  # 提前几天确保覆盖
 
         # 单次 wsd 请求, 只取每年年末附近的少量数据点
         for yr in all_years:
@@ -1121,14 +1217,30 @@ def _get_index_annual_returns(index_code: str, years: list) -> dict:
                 yr_end = datetime.now().strftime("%Y-%m-%d")
                 yr_start = (datetime.now() - pd.Timedelta(days=15)).strftime("%Y-%m-%d")
 
-            res = w.wsd(index_code, "close", yr_start, yr_end, "")
-            if res.ErrorCode == 0 and res.Data and res.Data[0]:
-                # 取最后一个有效值作为该年年末收盘价
-                valid_vals = [(i, v) for i, v in enumerate(res.Data[0])
-                              if v is not None and str(v) != 'nan']
-                if valid_vals:
-                    _, last_val = valid_vals[-1]
-                    result[yr] = float(last_val)
+            v_val = None
+            if wind_available:
+                res = w.wsd(index_code, "close", yr_start, yr_end, "")
+                if res.ErrorCode == 0 and res.Data and res.Data[0]:
+                    # 取最后一个有效值作为该年年末收盘价
+                    valid_vals = [v for v in res.Data[0] if v is not None and str(v) != 'nan']
+                    if valid_vals:
+                        v_val = valid_vals[-1]
+
+            if v_val is None:
+                try:
+                    import sys
+                    from scripts.tushare_fetcher import fetch_index_daily
+                    logger.info(f"[智选回测] 启用 Tushare API 兜底指数 {index_code} ({yr_start}至{yr_end})...")
+                    df_bm = fetch_index_daily({index_code: index_code}, yr_start, yr_end)
+                    if not df_bm.empty and index_code in df_bm.columns:
+                        ser = df_bm[index_code].dropna()
+                        if not ser.empty:
+                            v_val = ser.iloc[-1]
+                except Exception as e:
+                    logger.warning(f"[智选回测] Tushare 获取指数失败: {e}")
+
+            if v_val is not None:
+                result[yr] = float(v_val)
 
         # 计算年度收益率
         annual_returns = {}

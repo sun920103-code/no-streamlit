@@ -16,7 +16,7 @@ def get_wind_fund_profiles(fund_codes: list) -> dict:
     try:
         from WindPy import w
         if not w.isconnected():
-            w.start()
+            return {code: _get_empty_profile(code) for code in unique_codes}
     except ImportError:
         print("[WindError] WindPy module not found.")
         return {code: _get_empty_profile(code) for code in unique_codes}
@@ -174,27 +174,44 @@ def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
     
     try:
         from WindPy import w
-        if not w.isconnected():
-            w.start()
+        wind_available = w.isconnected()
     except ImportError:
         print("[WindError] WindPy not available for portfolio metrics.")
-        return {"source": "fallback"}
+        wind_available = False
     
     # 拉取 NAV 时序
     current_date = datetime.now()
-    start_date = (current_date - timedelta(days=365 * period_years + 30)).strftime("%Y-%m-%d")
-    end_date = current_date.strftime("%Y-%m-%d")
+    start_date_str = (current_date - timedelta(days=365 * period_years + 30)).strftime("%Y-%m-%d")
+    end_date_str = current_date.strftime("%Y-%m-%d")
     
-    res = w.wsd(','.join(codes), "nav_adj", start_date, end_date, "")
-    if res.ErrorCode != 0:
-        print(f"[Wind API ERROR] Portfolio NAV fetch failed: {res.ErrorCode}")
+    df_nav = None
+    source_used = "fallback"
+
+    if wind_available:
+        res = w.wsd(','.join(codes), "nav_adj", start_date_str, end_date_str, "")
+        if res.ErrorCode == 0:
+            if len(codes) == 1:
+                df_nav = pd.DataFrame({codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
+            else:
+                df_nav = pd.DataFrame(dict(zip(codes, res.Data)), index=pd.to_datetime(res.Times))
+            source_used = "wind"
+            print(f"[智选] KPI 测算使用 Wind: 成功拉取 {len(codes)} 只基金的历史净值")
+        else:
+            print(f"[Wind API ERROR] Portfolio NAV fetch failed: {res.ErrorCode}")
+
+    if df_nav is None or df_nav.empty:
+        # ── Tushare 兜底 ──
+        try:
+            from scripts.tushare_fetcher import fetch_fund_nav
+            print(f"[智选] Wind 净值拉取失败，启用 Tushare API 兜底抓取组合 KPI 所需净值: {len(codes)}只底仓...")
+            df_nav = fetch_fund_nav(codes, start_date_str, end_date_str)
+            if df_nav is not None and not df_nav.empty:
+                source_used = "tushare"
+        except Exception as e:
+            print(f"[Tushare ERROR] 兜底获取净值失败: {e}")
+
+    if df_nav is None or df_nav.empty:
         return {"source": "fallback"}
-    
-    # 构建 NAV DataFrame
-    if len(codes) == 1:
-        df_nav = pd.DataFrame({codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-    else:
-        df_nav = pd.DataFrame(dict(zip(codes, res.Data)), index=pd.to_datetime(res.Times))
     
     df_nav.dropna(how='all', inplace=True)
     df_nav.ffill(inplace=True)
@@ -247,6 +264,6 @@ def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
         "data_points": len(df_returns),
         "valid_funds": len(valid_codes),
         "total_funds": len(codes),
-        "source": "wind",
+        "source": source_used,
     }
 

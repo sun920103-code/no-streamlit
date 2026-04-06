@@ -24,7 +24,7 @@ from loguru import logger
 # 动态注入祖传代码路径
 LEGACY_SERVICES_DIR = r"D:\No Streamlit\20260325"
 if LEGACY_SERVICES_DIR not in sys.path:
-    sys.path.insert(0, LEGACY_SERVICES_DIR)
+    sys.path.append(LEGACY_SERVICES_DIR)
 
 router = APIRouter(prefix="/rebalance", tags=["一键配置调仓"])
 
@@ -125,6 +125,55 @@ def _build_class_map(bare_codes: list) -> dict:
     return class_map
 
 
+PROXY_MAPPING = {
+    "海外QDII": ["大盘核心", "科技成长"],
+    "科技成长": ["大盘核心", "红利防守"],
+    "黄金商品": ["纯债固收", "短债理财"], # 视作避险替代
+    "大盘核心": ["红利防守", "科技成长"],
+    "红利防守": ["大盘核心", "纯债固收"],
+    "混合债券": ["纯债固收", "大盘核心"],
+    "纯债固收": ["短债理财", "混合债券"],
+    "短债理财": ["纯债固收", "混合债券"]
+}
+
+def _fold_views(views: dict, class_map: dict) -> dict:
+    """
+    当宏观/新闻引擎产生了针对某资产类别(如'海外QDII')的看多/看空观点，
+    但客户的持仓池 (class_map) 中压根没有这份额资产时，
+    把该观点平移/降维折叠 (Fold) 给持仓里的第一替补资产。
+    这样避免因子信号因为「目标资产缺失」而被白白抛弃。
+    """
+    available_classes = set(class_map.values())
+    folded_views = {}
+    
+    for asset_class, score in views.items():
+        if abs(score) < 0.001:
+            continue
+            
+        if asset_class in available_classes:
+            folded_views[asset_class] = folded_views.get(asset_class, 0.0) + score
+        else:
+            # 在池中无法映射！进行寻找替补的遍历
+            found_proxy = False
+            proxies = PROXY_MAPPING.get(asset_class, ["大盘核心"])
+            for proxy in proxies:
+                if proxy in available_classes:
+                    # 将观点折叠传递，施加一点损耗系数 (0.8) 代表不完全匹配
+                    logger.info(f"🔄 [观点折叠] 目标资产 [{asset_class}] 不在持仓中, 信号 {score} 已折叠转移给 [{proxy}]")
+                    folded_views[proxy] = folded_views.get(proxy, 0.0) + score * 0.8
+                    found_proxy = True
+                    break
+                    
+            if not found_proxy:
+                # 实在找不到替补 (比如持仓全空)，强行给大盘核心 (若存在)
+                if "大盘核心" in available_classes:
+                    logger.info(f"🔄 [观点折叠] 目标资产 [{asset_class}] 找不到精准替补, 强制降维给 [大盘核心]")
+                    folded_views["大盘核心"] = folded_views.get("大盘核心", 0.0) + score * 0.5
+                else:
+                    logger.warning(f"⚠️ [观点折叠] 目标资产 [{asset_class}] 无法找到任何可承接的资产! 信号流失。")
+    
+    return folded_views
+
 def _asset_views_to_fund_weights(
     asset_views: dict,
     bare_codes: list,
@@ -217,6 +266,7 @@ def _load_client_nav() -> Optional[pd.DataFrame]:
     path = os.path.join(data_dir, csvs[0])
     try:
         df = pd.read_csv(path, index_col=0, parse_dates=True)
+        df = df[df.index.notnull()]
         # 列名统一去掉后缀 .OF 等
         df.columns = [c.split(".")[0].zfill(6) for c in df.columns]
         logger.info(f"[Rebalance] 加载客户 NAV: {path} ({len(df)} 天 × {len(df.columns)} 基金)")
@@ -424,6 +474,8 @@ def _run_pipeline_sync(
 
         # 因子 → 资产类别级得分 (矩阵乘法)
         step1_asset_views = macro_factor_to_asset_views(step1_factors)
+        step1_asset_views = _fold_views(step1_asset_views, class_map)
+        
         # 资产类别得分 → 基金级权重 (以原持仓为基准偏移)
         step1_weights = _asset_views_to_fund_weights(
             step1_asset_views, 
@@ -461,6 +513,7 @@ def _run_pipeline_sync(
             log_fn(f"✅ 新闻因子提取完成: {step2_news_digest[:50]}...")
 
             step2_asset_views = macro_factor_to_asset_views(step2_factors)
+            step2_asset_views = _fold_views(step2_asset_views, class_map)
             
             # --- BL Optimizer (传入 class_map 脱离 Streamlit 依赖) ---
             from services.bl_fusion import black_litterman_fusion
@@ -589,14 +642,11 @@ def _run_pipeline_sync(
                             index=bare_codes, columns=bare_codes
                         )
                     
-                    # ✅ 直接传入 MOE 产出的 bl_views, 而非从全零因子重构
+                    # ✅ 使用折叠后的 step3_asset_views 重建 views_for_bl
+                    step3_asset_views = _fold_views(step3_asset_views, class_map)
                     views_for_bl = {}
-                    for ac, vdata in bl_views.items():
-                        if isinstance(vdata, dict):
-                            views_for_bl[ac] = vdata
-                        else:
-                            views_for_bl[ac] = {"view": float(vdata) if vdata else 0.0, "confidence": 0.7}
-                    
+                    for ac, val in step3_asset_views.items():
+                        views_for_bl[ac] = {"view": val, "confidence": 0.8}
                     bl_weights, _ = black_litterman_fusion(
                         rp_weights=original_weights,       # ✅ 基于原始持仓
                         cov_matrix=cov_matrix,
@@ -754,6 +804,9 @@ def _run_pipeline_sync(
                     model = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, o=1, q=1, dist='skewt', rescale=False)
                     res = model.fit(disp='off')
                     cond_vol = res.conditional_volatility / 100
+                    # Filter out NaT values from index to prevent NaTType strftime error
+                    cond_vol = cond_vol[cond_vol.index.notna()].dropna()
+                    
                     gamma_keys = [k for k in res.params.index if 'gamma' in k.lower()]
                     gamma_val = float(res.params[gamma_keys[0]]) if gamma_keys else 0.0
 
@@ -767,7 +820,9 @@ def _run_pipeline_sync(
                         "asymmetry": "负面冲击放大" if gamma_val < -0.03 else "冲击基本对称",
                     }
                 except Exception as e_eg:
+                    import traceback
                     egarch_data[key] = {"label": label, "bypassed": True, "reason": str(e_eg)[:60]}
+                    log_fn(f"EGARCH Detail Error: {traceback.format_exc()}")
             log_fn(f"✅ EGARCH 计算完成 ({len(egarch_data)} 个配置)")
         except Exception as e_all:
             log_fn(f"⚠️ EGARCH 计算异常: {str(e_all)[:60]}")

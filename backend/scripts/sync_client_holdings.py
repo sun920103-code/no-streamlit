@@ -82,12 +82,17 @@ def main():
         from services.wind_fetcher import init_wind
 
         tushare_used = False
+        wind_available = True
 
         w = init_wind()
         if w is None:
-            raise RuntimeError("Wind 连接失败，请确保 Wind 终端已启动")
+            logging.warning("⚠️ Wind 不可用 (WindPy 未安装或终端未启动), 将使用 Tushare 全量兜底模式")
+            wind_available = False
 
-        logging.info(f"✅ Wind 已连接, 开始分批下载 {len(codes)} 只基金...")
+        if wind_available:
+            logging.info(f"✅ Wind 已连接, 开始分批下载 {len(codes)} 只基金...")
+        else:
+            logging.info(f"🔄 Tushare 全量模式, 开始处理 {len(codes)} 只基金...")
 
         end_date = datetime.today().strftime('%Y-%m-%d')
         start_date = '2020-01-01'
@@ -106,7 +111,10 @@ def main():
 
         # Wind w.wsd 也需要 .OF 后缀, 否则返回全 NaN
         _wsd_codes = [c + '.OF' if '.' not in c else c for c in codes]
-        for batch_i in range(0, len(_wsd_codes), BATCH_SIZE):
+        if not wind_available:
+            # 跳过 Wind NAV 下载, 直接走 Tushare 兜底
+            logging.info("  ⏩ Wind 不可用, 跳过 Wind NAV 下载")
+        for batch_i in range(0, len(_wsd_codes), BATCH_SIZE) if wind_available else []:
             batch = _wsd_codes[batch_i:batch_i + BATCH_SIZE]
             batch_label = f"[{batch_i+1}-{min(batch_i+BATCH_SIZE, len(_wsd_codes))}/{len(_wsd_codes)}]"
             logging.info(f"⏳ {batch_label} 拉取净值: {','.join(batch)}")
@@ -179,7 +187,7 @@ def main():
         all_meta_dfs = []
         _meta_failed_codes = []
 
-        for batch_i in range(0, len(_wss_codes), BATCH_SIZE):
+        for batch_i in range(0, len(_wss_codes), BATCH_SIZE) if wind_available else []:
             batch = _wss_codes[batch_i:batch_i + BATCH_SIZE]
             batch_label = f"[meta {batch_i+1}-{min(batch_i+BATCH_SIZE, len(_wss_codes))}/{len(_wss_codes)}]"
             _done = False
@@ -237,14 +245,30 @@ def main():
         # 归一化元数据 index: 去掉 .OF 后缀, 补齐前导零到 6 位, 与 nav 列名对齐
         if not df_meta.empty:
             df_meta.index = [str(c).split('.')[0].zfill(6) for c in df_meta.index]
+            df_meta.columns = [str(col).upper() for col in df_meta.columns]
+            
         if _meta_failed_codes:
             logging.warning(f"⚠️ 以下基金元数据最终获取失败: {_meta_failed_codes}")
 
         # ── Wind 元数据缺失 → Tushare 兜底 ──
-        _meta_missing = [c for c in success_codes if c not in (df_meta.index if not df_meta.empty else [])]
-        if _meta_missing or df_meta.empty:
-            _ts_target = _meta_missing if _meta_missing else success_codes
-            logging.info(f"🔄 Tushare 元数据兜底: {len(_ts_target)} 只基金...")
+        _meta_missing = []
+        _meta_empty_name = []
+        if df_meta.empty:
+            _meta_missing = list(success_codes)
+        else:
+            for c in success_codes:
+                if c not in df_meta.index:
+                    _meta_missing.append(c)
+                else:
+                    # 如果Wind返回了数据，但SEC_NAME为空(NaN)，也需要Tushare兜底
+                    name_val = df_meta.loc[c, 'SEC_NAME'] if 'SEC_NAME' in df_meta.columns else None
+                    if pd.isna(name_val) or str(name_val).strip() in ('', 'nan', 'None'):
+                        _meta_empty_name.append(c)
+
+        _ts_target = _meta_missing + _meta_empty_name
+        
+        if _ts_target:
+            logging.info(f"🔄 Tushare 元数据兜底: {len(_ts_target)} 只基金 (缺失:{len(_meta_missing)}, 无名称:{len(_meta_empty_name)})...")
             print("__TUSHARE_STARTED__", flush=True)
             try:
                 from tushare_fetcher import fetch_fund_metadata
@@ -253,11 +277,16 @@ def main():
                     if df_meta.empty:
                         df_meta = df_ts_meta
                     else:
-                        # 合并: 只补充缺失的
-                        for idx in df_ts_meta.index:
-                            if idx not in df_meta.index:
+                        for idx in _meta_missing:
+                            if idx in df_ts_meta.index and idx not in df_meta.index:
                                 df_meta = pd.concat([df_meta, df_ts_meta.loc[[idx]]])
-                    logging.info(f"  ✅ Tushare 元数据兜底成功: {len(df_ts_meta)} 只")
+                        for idx in _meta_empty_name:
+                            if idx in df_ts_meta.index:
+                                for col in df_ts_meta.columns:
+                                    if col not in df_meta.columns:
+                                        df_meta[col] = pd.NA
+                                    df_meta.loc[idx, col] = df_ts_meta.loc[idx, col]
+                    logging.info(f"  ✅ Tushare 元数据兜底完成")
                     tushare_used = True
             except Exception as e_ts:
                 logging.warning(f"  ⚠️ Tushare 元数据兜底异常: {e_ts}")
@@ -277,7 +306,7 @@ def main():
         _three_yr_ago = (datetime.today() - timedelta(days=3*365)).strftime('%Y%m%d')
 
         # --- 逐年回报: 批量 WSS ---
-        for yr in _years:
+        for yr in _years if wind_available else []:
             yr_end = f"{yr}1231" if yr < _current_year else _trade_date_today
             try:
                 res = w.wss(','.join(_wss_codes), "return_y",
@@ -301,52 +330,54 @@ def main():
         #       T-1 确保使用最近一个完整交易日的净值。
         _t1_date = (datetime.today() - timedelta(days=1)).strftime('%Y%m%d')
 
-        try:
-            res = w.wss(','.join(_wss_codes),
-                        "return_6m,return_1y,return_3y,return_5y,return_ytd",
-                        f"annualized=0;tradeDate={_t1_date}")
-            if res.ErrorCode == 0 and res.Data:
-                _rf = [f.upper() for f in (res.Fields if hasattr(res, 'Fields') else [])]
-                _field_map = {
-                    'RETURN_6M': 'ret_6m', 'RETURN_1Y': 'ret_1y',
-                    'RETURN_3Y': 'ret_3y', 'RETURN_5Y': 'ret_5y',
-                    'RETURN_YTD': 'ret_ytd',
-                }
-                for fi, f_name in enumerate(_rf):
-                    key = _field_map.get(f_name)
-                    if key and fi < len(res.Data):
-                        for j, code in enumerate(_wss_codes):
-                            bare = str(code).split('.')[0].zfill(6)
-                            val = res.Data[fi][j] if j < len(res.Data[fi]) else None
-                            if val is not None and str(val) != 'nan':
-                                _summary_data.setdefault(bare, {})[key] = float(val) / 100.0
-                logging.info("  ✅ 6M/1Y/3Y/5Y/YTD WSS 完成")
-        except Exception as e:
-            logging.warning(f"  ⚠️ 周期收益率 WSS 异常: {e}")
+        if wind_available:
+            try:
+                res = w.wss(','.join(_wss_codes),
+                            "return_6m,return_1y,return_3y,return_5y,return_ytd",
+                            f"annualized=0;tradeDate={_t1_date}")
+                if res.ErrorCode == 0 and res.Data:
+                    _rf = [f.upper() for f in (res.Fields if hasattr(res, 'Fields') else [])]
+                    _field_map = {
+                        'RETURN_6M': 'ret_6m', 'RETURN_1Y': 'ret_1y',
+                        'RETURN_3Y': 'ret_3y', 'RETURN_5Y': 'ret_5y',
+                        'RETURN_YTD': 'ret_ytd',
+                    }
+                    for fi, f_name in enumerate(_rf):
+                        key = _field_map.get(f_name)
+                        if key and fi < len(res.Data):
+                            for j, code in enumerate(_wss_codes):
+                                bare = str(code).split('.')[0].zfill(6)
+                                val = res.Data[fi][j] if j < len(res.Data[fi]) else None
+                                if val is not None and str(val) != 'nan':
+                                    _summary_data.setdefault(bare, {})[key] = float(val) / 100.0
+                    logging.info("  ✅ 6M/1Y/3Y/5Y/YTD WSS 完成")
+            except Exception as e:
+                logging.warning(f"  ⚠️ 周期收益率 WSS 异常: {e}")
 
         # --- 近三年年化波动率 + 最大回撤: WSS risk_stdevyearly + risk_maxdownside ---
         # risk_stdevyearly 对全部 .OF / .SH 基金均有效 (已验证)
         # risk_maxdownside2 对 .OF 返回 NaN, 改用 risk_maxdownside (已验证)
-        try:
-            res = w.wss(','.join(_wss_codes),
-                        "risk_stdevyearly,risk_maxdownside",
-                        f"startDate={_three_yr_ago};endDate={_trade_date_today};period=2;returnType=1;")
-            if res.ErrorCode == 0 and res.Data:
-                _flds = [f.upper() for f in (res.Fields if hasattr(res, 'Fields') else ['RISK_STDEVYEARLY', 'RISK_MAXDOWNSIDE'])]
-                for fi, f_name in enumerate(_flds):
-                    if fi >= len(res.Data):
-                        continue
-                    for j, code in enumerate(_wss_codes):
-                        bare = str(code).split('.')[0].zfill(6)
-                        val = res.Data[fi][j] if j < len(res.Data[fi]) else None
-                        if val is not None and str(val) != 'nan':
-                            if 'STDEV' in f_name:
-                                _summary_data.setdefault(bare, {})['vol_3y'] = float(val) / 100.0
-                            elif 'MAXDOWN' in f_name:
-                                _summary_data.setdefault(bare, {})['max_dd_3y'] = abs(float(val)) / 100.0
-                logging.info("  ✅ 年化波动率(三年期) + 最大回撤(三年期) WSS 完成")
-        except Exception as e:
-            logging.warning(f"  ⚠️ vol/mdd WSS 异常: {e}")
+        if wind_available:
+            try:
+                res = w.wss(','.join(_wss_codes),
+                            "risk_stdevyearly,risk_maxdownside",
+                            f"startDate={_three_yr_ago};endDate={_trade_date_today};period=2;returnType=1;")
+                if res.ErrorCode == 0 and res.Data:
+                    _flds = [f.upper() for f in (res.Fields if hasattr(res, 'Fields') else ['RISK_STDEVYEARLY', 'RISK_MAXDOWNSIDE'])]
+                    for fi, f_name in enumerate(_flds):
+                        if fi >= len(res.Data):
+                            continue
+                        for j, code in enumerate(_wss_codes):
+                            bare = str(code).split('.')[0].zfill(6)
+                            val = res.Data[fi][j] if j < len(res.Data[fi]) else None
+                            if val is not None and str(val) != 'nan':
+                                if 'STDEV' in f_name:
+                                    _summary_data.setdefault(bare, {})['vol_3y'] = float(val) / 100.0
+                                elif 'MAXDOWN' in f_name:
+                                    _summary_data.setdefault(bare, {})['max_dd_3y'] = abs(float(val)) / 100.0
+                    logging.info("  ✅ 年化波动率(三年期) + 最大回撤(三年期) WSS 完成")
+            except Exception as e:
+                logging.warning(f"  ⚠️ vol/mdd WSS 异常: {e}")
 
         # ── 2.5a-Fallback: 如果 Wind 取不到周期/年度回报, 使用 df_nav 本地计算兜底 ──
         if not df_nav.empty:
@@ -430,7 +461,7 @@ def main():
         )
         _trade_date = datetime.today().strftime('%Y%m%d')
         _rating_opts = f"tradeDate={_trade_date};fundType=1;"
-        for batch_i in range(0, len(_wss_codes), BATCH_SIZE):
+        for batch_i in range(0, len(_wss_codes), BATCH_SIZE) if wind_available else []:
             batch = _wss_codes[batch_i:batch_i + BATCH_SIZE]
             try:
                 logging.info(f"  ⏳ 排名批次 codes={batch[:2]}...")
@@ -463,7 +494,7 @@ def main():
 
         _bm_annual = {}  # {bm_code: {year: ret}}
         _wsd_end = datetime.today().strftime('%Y%m%d')  # 基准行情截止日期
-        if _bm_codes_list:
+        if _bm_codes_list and wind_available:
             logging.info(f"📊 拉取 {len(_bm_codes_list)} 个基准指数逐年回报...")
             for bm_code in _bm_codes_list:
                 try:
@@ -559,7 +590,8 @@ def main():
         _rpt_candidates = _build_rpt_dates()
         logging.info(f"  报告期候选: {_rpt_candidates}")
 
-        for fund_code in success_codes:
+        if wind_available:
+          for fund_code in success_codes:
             if fund_code in holdings_map:
                 continue  # 已有数据, 跳过
             _fc_wss = fund_code + '.OF' if '.' not in fund_code else fund_code
@@ -612,7 +644,7 @@ def main():
         # ── 方法 A2: w.wsd(top10_stockwindcode) — 备用 API 端点 ──
         # 参考 MultiSourceFundDiagnosis: 不同的 Wind 字段, 可能在 w.wset 失败时可用
         _funds_missing_a2 = [c for c in success_codes if c not in holdings_map]
-        if _funds_missing_a2:
+        if _funds_missing_a2 and wind_available:
             logging.info(f"  🔄 方法A2: 尝试 w.wsd(top10_stockwindcode) 对 {len(_funds_missing_a2)} 只基金...")
             for fund_code in _funds_missing_a2:
                 _fc_wsd = fund_code + '.OF' if '.' not in fund_code else fund_code
@@ -647,7 +679,7 @@ def main():
 
         # ── 方法 B 回退: w.wss(order=1..10) — 逐只查询 top10 ──
         _funds_missing = [c for c in success_codes if c not in holdings_map]
-        if _funds_missing:
+        if _funds_missing and wind_available:
             logging.info(f"  🔄 {len(_funds_missing)} 只基金仍无持仓数据，回退 w.wss(order=1..10)...")
             for order in range(1, 11):
                 try:
@@ -683,7 +715,7 @@ def main():
                 all_underlying.add(stk_code)
 
         underlying_pct = {}  # {stock_code: {'name': ..., 'pct_chg': ..., 'max_drop_7d': ..., 'drop_date': ...}}
-        if all_underlying:
+        if all_underlying and wind_available:
             logging.info(f"📊 拉取 {len(all_underlying)} 只底层资产行情...")
             _und_list = list(all_underlying)
             _7d_ago = (today - timedelta(days=10)).strftime('%Y%m%d')
@@ -775,13 +807,17 @@ def main():
         if not df_meta.empty:
             df_meta.to_csv(meta_path, encoding='utf-8-sig')
         else:
-            logging.error("❌ 元数据为空，client_nav_meta.csv 未生成！Wind wss 接口可能无响应。")
-            _emit_result({
-                "status": "error",
-                "detail": "净值下载成功，但基金元数据 (fund_type/fund_investtype) 获取失败。"
-                          "请检查 Wind 终端是否正常，或手动在 Wind 中执行 wss 查询测试。",
-            })
-            sys.exit(1)
+            logging.warning("⚠️ 元数据为空，client_nav_meta.csv 未生成")
+            if wind_available:
+                # Wind 可用但元数据为空 — 严重错误
+                _emit_result({
+                    "status": "error",
+                    "detail": "净值下载成功，但基金元数据 (fund_type/fund_investtype) 获取失败。"
+                              "请检查 Wind 终端是否正常，或手动在 Wind 中执行 wss 查询测试。",
+                })
+                sys.exit(1)
+            else:
+                logging.warning("  ↳ Tushare 模式下元数据缺失为预期行为，继续处理")
 
         # ══════════════════════════════════════════
         # 5. 自动下载 7 大比较基准指数行情 (与客户净值同时间段)
@@ -796,25 +832,45 @@ def main():
             'HSI.HI':    '恒生指数',
         }
         bm_path = os.path.join(out_dir, 'client_benchmarks.csv')
-        try:
-            logging.info(f"📊 自动下载 {len(BENCHMARK_CODES)} 个比较基准指数行情...")
-            bm_codes_str = ','.join(BENCHMARK_CODES.keys())
-            bm_result = w.wsd(bm_codes_str, "close", start_date, end_date, "")
-            if bm_result.ErrorCode == 0:
-                bm_codes_list = list(BENCHMARK_CODES.keys())
-                if len(bm_codes_list) == 1:
-                    df_bm = pd.DataFrame({bm_codes_list[0]: bm_result.Data[0]}, index=bm_result.Times)
+        bm_success = False
+
+        if wind_available:
+            try:
+                logging.info(f"📊 自动下载 {len(BENCHMARK_CODES)} 个比较基准指数行情...")
+                bm_codes_str = ','.join(BENCHMARK_CODES.keys())
+                bm_result = w.wsd(bm_codes_str, "close", start_date, end_date, "")
+                if bm_result.ErrorCode == 0:
+                    bm_codes_list = list(BENCHMARK_CODES.keys())
+                    if len(bm_codes_list) == 1:
+                        df_bm = pd.DataFrame({bm_codes_list[0]: bm_result.Data[0]}, index=bm_result.Times)
+                    else:
+                        df_bm = pd.DataFrame(bm_result.Data, index=bm_result.Codes, columns=bm_result.Times).T
+                    df_bm.index = pd.to_datetime(df_bm.index)
+                    df_bm.index.name = 'Date'
+                    df_bm = df_bm.dropna(how='all')
+                    df_bm.to_csv(bm_path, encoding='utf-8-sig')
+                    logging.info(f"  ✅ 基准行情已保存: {bm_path} ({len(df_bm)} 行 × {len(df_bm.columns)} 列)")
+                    bm_success = True
                 else:
-                    df_bm = pd.DataFrame(bm_result.Data, index=bm_result.Codes, columns=bm_result.Times).T
-                df_bm.index = pd.to_datetime(df_bm.index)
-                df_bm.index.name = 'Date'
-                df_bm = df_bm.dropna(how='all')
-                df_bm.to_csv(bm_path, encoding='utf-8-sig')
-                logging.info(f"  ✅ 基准行情已保存: {bm_path} ({len(df_bm)} 行 × {len(df_bm.columns)} 列)")
-            else:
-                logging.warning(f"  ⚠️ 基准行情下载失败: ErrorCode={bm_result.ErrorCode}")
-        except Exception as e_bm:
-            logging.warning(f"  ⚠️ 基准行情下载异常 (非致命): {e_bm}")
+                    logging.warning(f"  ⚠️ 基准行情下载失败: ErrorCode={bm_result.ErrorCode}")
+            except Exception as e_bm:
+                logging.warning(f"  ⚠️ 基准行情下载异常 (非致命): {e_bm}")
+        
+        if not bm_success:
+            # ── 启用 Tushare 兜底 ──
+            try:
+                logging.info(f"🔄 启动 Tushare 兜底获取比较基准指数行情...")
+                from tushare_fetcher import fetch_index_daily
+                df_bm_ts = fetch_index_daily(BENCHMARK_CODES, start_date, end_date)
+                if df_bm_ts is not None and not df_bm_ts.empty:
+                    df_bm_ts.index.name = 'Date'
+                    df_bm_ts.to_csv(bm_path, encoding='utf-8-sig')
+                    logging.info(f"  ✅ Tushare 基准行情已保存: {bm_path} ({len(df_bm_ts)} 行 × {len(df_bm_ts.columns)} 列)")
+                    tushare_used = True
+                else:
+                    logging.warning("  ⚠️ Tushare 基准行情返回为空")
+            except Exception as e_ts:
+                logging.warning(f"  ⚠️ Tushare 基准行情兜底异常: {e_ts}")
 
         # 保存穿透数据为 JSON
         xray_data = {

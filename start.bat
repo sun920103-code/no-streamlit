@@ -7,8 +7,9 @@ echo ============================================
 echo.
 
 // Start Backend (FastAPI)
-echo [1/2] Starting backend service (FastAPI :8001) ...
-start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlit\backend && ..\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8001"
+echo [1/2] Starting backend service (FastAPI :8002) ...
+start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlit\backend && ..\.venv\Scripts\uvicorn.exe main:app --reload --port 8002"
+
 
 :: Wait for backend to initialize
 timeout /t 4 /nobreak >nul

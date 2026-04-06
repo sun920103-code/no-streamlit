@@ -456,21 +456,22 @@
 
 
           <!-- ── Operation Log — Structured ── -->
-          <div v-if="rebalLogs.length > 0 || rebalRunning" class="w-full max-w-5xl bg-white rounded-2xl shadow-sm border border-[#e2e8f0] overflow-hidden mb-12 relative z-10">
+          <div v-if="rebalLogs.length > 0 || rebalRunning" class="w-full max-w-5xl bg-white rounded-2xl shadow-sm border border-[#e2e8f0] overflow-hidden mb-12 relative z-10 transition-all duration-300">
             <!-- Header -->
-            <div class="px-8 py-6 border-b border-[#e2e8f0] flex items-center justify-between bg-[#f8fafc]">
+            <div class="px-8 py-6 border-b border-[#e2e8f0] flex items-center justify-between bg-[#f8fafc] cursor-pointer hover:bg-slate-100 transition-colors select-none" @click="rebalLogExpanded = !rebalLogExpanded">
               <div class="flex items-center gap-3">
                 <div class="w-1.5 h-6 bg-[#1A365D] rounded-full"></div>
                 <div class="flex items-baseline gap-3">
                   <h2 class="text-xl font-bold text-[#1A365D] tracking-tight m-0" style="font-family: 'Inter', sans-serif;">运行日志</h2>
                   <span class="text-sm font-medium text-[#64748b] uppercase tracking-wider opacity-60">Operation Log</span>
+                  <span class="material-symbols-outlined text-[#64748b] ml-1 text-base transition-transform duration-300" :style="{ transform: rebalLogExpanded ? 'rotate(0deg)' : 'rotate(180deg)' }">expand_less</span>
                 </div>
               </div>
-              <span class="text-[10px] font-bold tracking-widest text-[#64748b] uppercase px-3 py-1.5 bg-[#f1f5f9] rounded m-0 border border-[#e2e8f0]">System_Status: Active</span>
+              <span class="text-[10px] font-bold tracking-widest text-[#64748b] uppercase px-3 py-1.5 bg-[#f1f5f9] rounded m-0 border border-[#e2e8f0]">System_Status: {{ rebalRunning ? 'ACTIVE' : 'IDLE' }}</span>
             </div>
 
             <!-- Content List -->
-            <div ref="rebalLogRef" class="px-8 py-8 max-h-[400px] overflow-y-auto">
+            <div v-show="rebalLogExpanded" ref="rebalLogRef" class="px-8 py-8 max-h-[400px] overflow-y-auto">
               <div class="space-y-0">
                 <div v-for="(log, idx) in rebalLogs" :key="idx" 
                     class="relative timeline-item" :class="[idx === rebalLogs.length - 1 && !rebalRunning ? '' : 'pb-8']">
@@ -896,6 +897,7 @@ const rebalLogs = ref([])
 const rebalResult = ref(null)
 const rebalAiOpen = ref(false)
 const rebalLogRef = ref(null)
+const rebalLogExpanded = ref(true)
 const rebalTableKeys = computed(() => {
   const base = { 'macro': '🧭 宏观象限调仓', 'news': '📰 新闻资讯调仓' }
   if (rebalResult.value?.has_report) base['report'] = '📄 研报调仓'

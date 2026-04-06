@@ -12,8 +12,8 @@ from typing import Dict, List, Optional
 # ==========================================
 LEGACY_SERVICES_DIR = r"D:\No Streamlit\20260325"
 if LEGACY_SERVICES_DIR not in sys.path:
-    # 插入到最前面，确保优先加载祖传代码
-    sys.path.insert(0, LEGACY_SERVICES_DIR)
+    # 追加到最后，避免遮蔽后端自己的 services 包
+    sys.path.append(LEGACY_SERVICES_DIR)
 
 # 延迟导入 (防 services 包缓存遮蔽)
 # from services.hrp_engine import hrp_optimize
@@ -651,6 +651,7 @@ async def forecast_egarch(payload: ReturnsSeriesPayload):
             #序列转 Pandas
             idx = pd.to_datetime(payload.dates)
             ret_series = pd.Series(payload.returns, index=idx)
+            ret_series = ret_series[ret_series.index.notnull()]
             
             _var = ret_series.var()
             if _var < 1e-8 or (ret_series.abs() < 1e-10).mean() > 0.9:
