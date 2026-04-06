@@ -1,10 +1,13 @@
 import os
 import sys
+import logging
 import pandas as pd
 import numpy as np
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # ==========================================
 # 🚨 动态注入祖传代码路径 (D:\No Streamlit\20260325)

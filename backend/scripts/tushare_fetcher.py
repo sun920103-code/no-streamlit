@@ -41,12 +41,22 @@ def _get_api():
     return _ts_api
 
 
+def _is_etf_code(wind_code: str) -> bool:
+    """判断是否为场内 ETF 代码 (上交所 .SH 或深交所 .SZ)。"""
+    c = str(wind_code).strip().upper()
+    return c.endswith('.SH') or c.endswith('.SZ')
+
+
 def _wind_code_to_ts_code(wind_code: str) -> str:
     """
-    Wind 基金代码 → Tushare 基金代码
-    例: '000979.OF' → '000979.OF',  '000979' → '000979.OF'
+    Wind 基金代码 → Tushare 基金代码。
+    ETF (场内基金): 保留 .SH / .SZ 后缀
+    开放式基金: 统一加 .OF 后缀
+    例: '510300.SH' → '510300.SH',  '000979.OF' → '000979.OF',  '000979' → '000979.OF'
     """
     c = str(wind_code).strip()
+    if _is_etf_code(c):
+        return c  # ETF 保持原样
     bare = c.split('.')[0].zfill(6)
     return f"{bare}.OF"
 
@@ -67,11 +77,14 @@ def _wind_stock_to_ts_code(wind_code: str) -> str:
 def fetch_fund_nav(codes: list, start_date: str, end_date: str) -> pd.DataFrame:
     """
     批量获取基金复权净值, 返回与 Wind w.wsd 兼容的 DataFrame。
+    自动识别 ETF (.SH/.SZ) 和开放式基金 (.OF), 分别使用:
+      - ETF: fund_daily API (收盘价 close)
+      - 开放式基金: fund_nav API (复权净值 adj_nav)
 
-    :param codes: 基金代码列表 (bare code, 如 ['000979', '001203'])
+    :param codes: 基金代码列表 (支持 Wind 格式如 '510300.SH' 或裸码 '000979')
     :param start_date: 开始日期 'YYYY-MM-DD'
     :param end_date: 结束日期 'YYYY-MM-DD'
-    :return: DataFrame, index=日期, columns=bare_code, values=复权净值
+    :return: DataFrame, index=日期, columns=原始代码, values=复权净值/收盘价
     """
     api = _get_api()
     all_dfs = {}
@@ -80,26 +93,43 @@ def fetch_fund_nav(codes: list, start_date: str, end_date: str) -> pd.DataFrame:
 
     for code in codes:
         ts_code = _wind_code_to_ts_code(code)
-        bare = code.split('.')[0].zfill(6)
+        col_key = code  # 保留原始代码作为列名
         try:
-            # Tushare fund_nav: 返回 ann_date, nav, accum_nav, adj_nav
-            df = api.fund_nav(
-                ts_code=ts_code,
-                start_date=start_ts,
-                end_date=end_ts,
-                fields='ann_date,adj_nav'
-            )
-            if df is not None and not df.empty:
-                df['ann_date'] = pd.to_datetime(df['ann_date'])
-                df = df.sort_values('ann_date').drop_duplicates(subset='ann_date', keep='last')
-                df = df.set_index('ann_date')
-                all_dfs[bare] = df['adj_nav'].astype(float)
-                logging.info(f"  [Tushare] {bare} NAV 获取成功: {len(df)} 天")
+            if _is_etf_code(code):
+                # ── ETF: 使用 fund_daily 获取收盘价 ──
+                df = api.fund_daily(
+                    ts_code=ts_code,
+                    start_date=start_ts,
+                    end_date=end_ts,
+                    fields='trade_date,close'
+                )
+                if df is not None and not df.empty:
+                    df['trade_date'] = pd.to_datetime(df['trade_date'])
+                    df = df.sort_values('trade_date').drop_duplicates(subset='trade_date', keep='last')
+                    df = df.set_index('trade_date')
+                    all_dfs[col_key] = df['close'].astype(float)
+                    logging.info(f"  [Tushare] {ts_code} ETF 收盘价获取成功: {len(df)} 天")
+                else:
+                    logging.warning(f"  [Tushare] {ts_code} ETF 收盘价为空")
             else:
-                logging.warning(f"  [Tushare] {bare} NAV 为空")
+                # ── 开放式基金: 使用 fund_nav 获取复权净值 ──
+                df = api.fund_nav(
+                    ts_code=ts_code,
+                    start_date=start_ts,
+                    end_date=end_ts,
+                    fields='ann_date,adj_nav'
+                )
+                if df is not None and not df.empty:
+                    df['ann_date'] = pd.to_datetime(df['ann_date'])
+                    df = df.sort_values('ann_date').drop_duplicates(subset='ann_date', keep='last')
+                    df = df.set_index('ann_date')
+                    all_dfs[col_key] = df['adj_nav'].astype(float)
+                    logging.info(f"  [Tushare] {ts_code} NAV 获取成功: {len(df)} 天")
+                else:
+                    logging.warning(f"  [Tushare] {ts_code} NAV 为空")
             time.sleep(0.12)  # Tushare 频率限制: 每分钟200次
         except Exception as e:
-            logging.warning(f"  [Tushare] {bare} NAV 异常: {e}")
+            logging.warning(f"  [Tushare] {code} NAV/价格 异常: {e}")
             time.sleep(0.5)
 
     if not all_dfs:

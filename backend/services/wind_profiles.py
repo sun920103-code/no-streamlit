@@ -154,12 +154,13 @@ def _get_empty_profile(code):
     }
 
 
-def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
+def compute_portfolio_metrics(allocations: list, period_years: int = 1, cached_nav_df: pd.DataFrame = None) -> dict:
     """
     基于真实基金 NAV 时序数据计算组合级 KPI。
     
     :param allocations: [{"code": "000001.OF", "weight_pct": 10.5}, ...]
     :param period_years: 回溯年数 (1/3/5)
+    :param cached_nav_df: 可选的预先拉取好的 NAV DataFrame，避免对 Tushare / Wind 进行重复高频请求
     :return: {"ann_vol_pct": 12.5, "max_drawdown_pct": -15.3, "ann_return_pct": 8.2, "sharpe": 0.65, "source": "wind"}
              如果 Wind 不可用则返回 {"source": "fallback"}
     """
@@ -187,7 +188,13 @@ def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
     df_nav = None
     source_used = "fallback"
 
-    if wind_available:
+    if cached_nav_df is not None and not cached_nav_df.empty:
+        avail_codes = [c for c in codes if c in cached_nav_df.columns]
+        if avail_codes:
+            df_nav = cached_nav_df[avail_codes].copy()
+            source_used = "cached"
+
+    if (df_nav is None or df_nav.empty) and wind_available:
         res = w.wsd(','.join(codes), "nav_adj", start_date_str, end_date_str, "")
         if res.ErrorCode == 0:
             if len(codes) == 1:
@@ -202,13 +209,28 @@ def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
     if df_nav is None or df_nav.empty:
         # ── Tushare 兜底 ──
         try:
-            from scripts.tushare_fetcher import fetch_fund_nav
+            # 使用绝对路径导入, 避免 sys.path / 包缓存在 Uvicorn 中失效
+            import importlib.util, os as _os
+            _tushare_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                "scripts", "tushare_fetcher.py"
+            )
+            _spec = importlib.util.spec_from_file_location("tushare_fetcher", _tushare_path)
+            _ts_mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_ts_mod)
+            fetch_fund_nav = _ts_mod.fetch_fund_nav
+
             print(f"[智选] Wind 净值拉取失败，启用 Tushare API 兜底抓取组合 KPI 所需净值: {len(codes)}只底仓...")
+            print(f"[智选] 请求代码: {codes[:5]}{'...' if len(codes) > 5 else ''}")
             df_nav = fetch_fund_nav(codes, start_date_str, end_date_str)
             if df_nav is not None and not df_nav.empty:
                 source_used = "tushare"
+                print(f"[智选] Tushare 兜底成功: {len(df_nav.columns)} 列, {len(df_nav)} 行, 列名={list(df_nav.columns[:5])}")
+            else:
+                print(f"[智选] Tushare 兜底返回空 DataFrame")
         except Exception as e:
-            print(f"[Tushare ERROR] 兜底获取净值失败: {e}")
+            import traceback
+            print(f"[Tushare ERROR] 兜底获取净值失败: {e}\n{traceback.format_exc()}")
 
     if df_nav is None or df_nav.empty:
         return {"source": "fallback"}
@@ -221,28 +243,51 @@ def compute_portfolio_metrics(allocations: list, period_years: int = 1) -> dict:
     if not valid_codes:
         return {"source": "fallback"}
     
-    # 计算各基金日收益率
+    # 计算各基金日收益率 (不使用 dropna('any')，避免年轻基金截断整体组合的历史)
     df_returns = df_nav[valid_codes].pct_change().dropna(how='all')
-    df_returns.dropna(how='any', inplace=True)
     
     if len(df_returns) < 30:
         return {"source": "fallback"}
     
-    # 归一化权重 (仅保留有有效数据的基金)
-    total_w = sum(weights_map.get(c, 0) for c in valid_codes)
-    if total_w <= 0:
-        return {"source": "fallback"}
-    norm_weights = np.array([weights_map.get(c, 0) / total_w for c in valid_codes])
+    # 获取归一化目标权重
+    base_weights = np.array([weights_map.get(c, 0) for c in valid_codes])
     
-    # ── 组合日收益率序列 ──
-    portfolio_returns = (df_returns[valid_codes].values @ norm_weights)
+    # ── 组合日收益率序列 (动态剔除无数据基金并重加权) ──
+    portfolio_returns = []
+    for date, row_series in df_returns.iterrows():
+        row_arr = row_series.values
+        valid_mask = ~np.isnan(row_arr)
+        if not valid_mask.any():
+            portfolio_returns.append(0.0)
+            continue
+            
+        w_valid = base_weights[valid_mask]
+        w_sum = w_valid.sum()
+        if w_sum > 1e-8:
+            daily_ret = np.dot(row_arr[valid_mask], w_valid / w_sum)
+            portfolio_returns.append(daily_ret)
+        else:
+            portfolio_returns.append(0.0)
+            
+    portfolio_returns = np.array(portfolio_returns)
+    # 剔除头部的 0 (由 pct_change 导致的第一个日期的 NaN 被上面当作无数据处理了)
+    if len(portfolio_returns) > 0 and portfolio_returns[0] == 0.0:
+        portfolio_returns = portfolio_returns[1:]
     
     # ── 年化波动率 (基于日收益率) ──
     daily_vol = np.std(portfolio_returns, ddof=1)
     ann_vol = daily_vol * np.sqrt(242)
     
-    # ── 年化收益率 ──
-    ann_ret = np.mean(portfolio_returns) * 242
+    # ── 累积净值曲线 ──
+    portfolio_nav = (1 + pd.Series(portfolio_returns)).cumprod()
+    
+    # ── 真实复合年化收益率 (CAGR) ──
+    trading_days = len(portfolio_returns)
+    total_return = portfolio_nav.iloc[-1] - 1.0
+    if trading_days > 0:
+        ann_ret = (1 + total_return) ** (242 / trading_days) - 1.0
+    else:
+        ann_ret = 0.0
     
     # ── 夏普比率 (无风险利率 2%) ──
     sharpe = (ann_ret - 0.02) / ann_vol if ann_vol > 1e-8 else 0

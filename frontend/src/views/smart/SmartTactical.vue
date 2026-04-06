@@ -531,9 +531,9 @@ async function executeOneClick() {
   pipelineStatus.value = '📡 新闻资讯调仓执行中...'
 
   try {
-    const weights = store.zx_steadyWeights
+    const weights = store.zx_selectedWeights
     if (!weights || Object.keys(weights).length === 0) {
-      throw new Error('稳健底仓权重为空，请先完成宏观配置')
+      throw new Error('选中底仓权重为空，请先完成宏观配置')
     }
 
     const fd = new FormData()
@@ -541,6 +541,9 @@ async function executeOneClick() {
     fd.append('capital', store.zx_capital)
     fd.append('max_vol', store.zx_maxVol)
     fd.append('period', store.zx_period)
+    if (store.zx_targetReturn !== undefined) {
+      fd.append('target_ret_pct', store.zx_targetReturn)
+    }
 
     for (const file of uploadedFiles.value) {
       fd.append('reports', file)

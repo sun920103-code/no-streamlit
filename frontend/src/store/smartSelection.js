@@ -37,18 +37,16 @@ export const useSmartStore = defineStore('zx_smartSelection', {
   }),
 
   getters: {
-    /** 当前稳健方案 (供战术配置使用) */
-    zx_steadyScenario(state) {
+    /** 当前选中方案 (供战术配置使用) */
+    zx_selectedScenario(state) {
       if (!state.zx_macroResult?.scenarios) return null
-      // 稳健配置 = 倒数第2个 (情景A) 或唯一一个 (情景B)
-      const scenarios = state.zx_macroResult.scenarios
-      if (scenarios.length === 1) return scenarios[0]
-      return scenarios.find(s => s.name.includes('稳健')) || scenarios[1] || scenarios[0]
+      const idx = state.zx_currentScenarioIdx !== undefined ? state.zx_currentScenarioIdx : 1
+      return state.zx_macroResult.scenarios[idx] || state.zx_macroResult.scenarios[0]
     },
 
-    /** 稳健方案的权重字典 {code: weight_pct} */
-    zx_steadyWeights(state) {
-      const scenario = this.zx_steadyScenario
+    /** 选中方案的权重字典 {code: weight_pct} */
+    zx_selectedWeights(state) {
+      const scenario = this.zx_selectedScenario
       if (!scenario?.allocations) return {}
       const weights = {}
       for (const alloc of scenario.allocations) {

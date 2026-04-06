@@ -228,12 +228,13 @@ async function runBacktest() {
   loading.value = true
   error.value = null
   try {
-    const baseWeights = store.zx_steadyWeights
+    const baseWeights = store.zx_selectedWeights
     const tacRes = store.zx_tacticalOneclickResult
     
     const ports = {}
     if (baseWeights && Object.keys(baseWeights).length > 0) {
-      ports['智选稳健配置'] = baseWeights
+      const scenarioName = store.zx_selectedScenario?.name || '量化配置底仓'
+      ports[scenarioName] = baseWeights
     }
     if (tacRes?.news_result?.weights) {
       ports['新闻资讯调仓'] = tacRes.news_result.weights
