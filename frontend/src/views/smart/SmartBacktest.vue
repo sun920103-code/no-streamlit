@@ -155,15 +155,15 @@
                     <span class="material-symbols-outlined filled-icon text-lg" style="font-variation-settings: 'FILL' 1; color: #735c00;">star</span>
                     <span class="font-semibold text-[#111d27]">{{ label }}</span>
                   </td>
-                  <td v-for="year in result.years" :key="year" class="py-5 px-6 text-center font-bold" :class="(rets[year] || 0) >= 0 ? 'text-[#c0392b]' : 'text-[#2e7d32]'" style="font-family: 'Work Sans', sans-serif;">
-                    {{ (rets[year] || 0) > 0 ? '+' : '' }}{{ rets[year] || 'N/A' }}
+                  <td v-for="year in result.years" :key="year" class="py-5 px-6 text-center font-bold" :class="fmtRetClass(rets[year])" style="font-family: 'Work Sans', sans-serif;">
+                    {{ fmtRet(rets[year]) }}
                   </td>
                 </tr>
                 <!-- 各个宽基指数 -->
                 <tr v-for="(rets, bmName) in result.benchmark_returns" :key="bmName" class="transition-colors hover:bg-gray-50">
                   <td class="py-5 px-6 text-[#59413d] font-medium pl-14">{{ bmName }}</td>
-                  <td v-for="year in result.years" :key="year" class="py-5 px-6 text-center" :class="(rets[year] || 0) >= 0 ? 'text-[#c0392b]' : 'text-[#2e7d32]'" style="font-family: 'Work Sans', sans-serif;">
-                    {{ (rets[year] || 0) > 0 ? '+' : '' }}{{ rets[year] || 'N/A' }}
+                  <td v-for="year in result.years" :key="year" class="py-5 px-6 text-center" :class="fmtRetClass(rets[year])" style="font-family: 'Work Sans', sans-serif;">
+                    {{ fmtRet(rets[year]) }}
                   </td>
                 </tr>
               </tbody>
@@ -255,6 +255,18 @@ async function runBacktest() {
   } finally {
     loading.value = false
   }
+}
+
+// ── 格式化收益率 (严格 null 检查, 防止 0% 被渲染为 N/A) ──
+function fmtRet(val) {
+  if (val === null || val === undefined) return 'N/A'
+  const n = Number(val)
+  if (isNaN(n)) return 'N/A'
+  return (n > 0 ? '+' : '') + n.toFixed(2)
+}
+function fmtRetClass(val) {
+  if (val === null || val === undefined) return 'text-[#737c7f]'
+  return Number(val) >= 0 ? 'text-[#c0392b]' : 'text-[#2e7d32]'
 }
 
 function renderChart() {

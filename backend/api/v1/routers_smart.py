@@ -834,14 +834,24 @@ def _tactical_oneclick_sync(
     cov_info = _load_or_build_cov_matrix(fund_codes)
     cov_built_at = cov_info.get("built_at", "未构建")
 
-    # 基础底仓 KPI (用 Wind 真实数据)
+    # ── 预获取 NAV 数据 (一次拉取, 三处复用, 防止 Tushare 限流) ──
     base_allocations_list = [
         {"code": code, "weight_pct": wpct}
         for code, wpct in base_allocation.items()
     ]
 
     wind_service = _import_backend_service("wind_profiles")
-    base_kpi = _compute_real_kpi(wind_service, base_allocations_list, period_years)
+
+    # Step A: 先预取一次 NAV DataFrame, 供 base / news / report 三个管线复用
+    _cached_nav_df = None
+    try:
+        _cached_nav_df = _prefetch_nav_for_kpi(base_allocation.keys(), period_years)
+        if _cached_nav_df is not None:
+            logger.info(f"[智选] NAV 预获取完成: {len(_cached_nav_df.columns)} 列 × {len(_cached_nav_df)} 行")
+    except Exception as e:
+        logger.warning(f"[智选] NAV 预获取失败(降级到逐次拉取): {e}")
+
+    base_kpi = _compute_real_kpi(wind_service, base_allocations_list, period_years, cached_nav_df=_cached_nav_df)
 
     # ── 强制将战术底仓的收益率向侧边栏 target_ret_pct 锚定以维持视觉连贯，并计算整体偏移 ──
     ret_offset = 0.0
@@ -865,6 +875,7 @@ def _tactical_oneclick_sync(
         wind_service=wind_service,
         _nfe=_nfe,
         _blv=_blv,
+        cached_nav_df=_cached_nav_df,
     )
     if news_result and isinstance(news_result.get("kpi", {}).get("ann_return_pct"), (int, float)):
         news_result["kpi"]["realized_return_pct"] = round(float(news_result["kpi"]["ann_return_pct"]), 2)
@@ -886,6 +897,7 @@ def _tactical_oneclick_sync(
             report_bytes_list=report_bytes_list,
             report_names=report_names,
             _blv=_blv,
+            cached_nav_df=_cached_nav_df,
         )
         if report_result and isinstance(report_result.get("kpi", {}).get("ann_return_pct"), (int, float)):
             report_result["kpi"]["realized_return_pct"] = round(float(report_result["kpi"]["ann_return_pct"]), 2)
@@ -900,13 +912,74 @@ def _tactical_oneclick_sync(
     }
 
 
-def _compute_real_kpi(wind_service, allocations_list: list, period_years: float) -> dict:
+def _prefetch_nav_for_kpi(fund_codes, period_years: float):
+    """
+    一次性预获取所有底仓基金的历史 NAV, 供 base/news/report 三个管线复用。
+    防止 Tushare API 限流导致后续管线 KPI 返回 N/A。
+    """
+    from datetime import datetime, timedelta
+    current_date = datetime.now()
+    start_date_str = (current_date - timedelta(days=365 * max(1, int(period_years)) + 30)).strftime("%Y-%m-%d")
+    end_date_str = current_date.strftime("%Y-%m-%d")
+    codes = list(fund_codes)
+
+    # 尝试 Wind
+    try:
+        from WindPy import w
+        if w.isconnected():
+            res = w.wsd(','.join(codes), "nav_adj", start_date_str, end_date_str, "")
+            if res.ErrorCode == 0:
+                import pandas as pd
+                if len(codes) == 1:
+                    df = pd.DataFrame({codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
+                else:
+                    df = pd.DataFrame(dict(zip(codes, res.Data)), index=pd.to_datetime(res.Times))
+                logger.info(f"[智选] NAV 预获取 (Wind): {len(df.columns)} 列, {len(df)} 行")
+                return df
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"[智选] NAV 预获取 Wind 失败: {e}")
+
+    # Tushare 兜底
+    try:
+        import importlib.util, os as _os
+        _tushare_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "..", "scripts", "tushare_fetcher.py"
+        )
+        # 规范化路径
+        _tushare_path = _os.path.normpath(_tushare_path)
+        if not _os.path.exists(_tushare_path):
+            # 备用路径
+            _tushare_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                "scripts", "tushare_fetcher.py"
+            )
+            _tushare_path = _os.path.normpath(_tushare_path)
+        _spec = importlib.util.spec_from_file_location("tushare_fetcher_prefetch", _tushare_path)
+        _ts_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_ts_mod)
+        df = _ts_mod.fetch_fund_nav(codes, start_date_str, end_date_str)
+        if df is not None and not df.empty:
+            logger.info(f"[智选] NAV 预获取 (Tushare): {len(df.columns)} 列, {len(df)} 行")
+            return df
+    except Exception as e:
+        logger.warning(f"[智选] NAV 预获取 Tushare 也失败: {e}")
+
+    return None
+
+
+def _compute_real_kpi(wind_service, allocations_list: list, period_years: float, cached_nav_df=None) -> dict:
     """用 Wind/Tushare 真实数据计算 KPI, 失败则用估算值兜底。"""
     _err_detail = ""
     try:
-        metrics = wind_service.compute_portfolio_metrics(allocations_list, period_years=int(max(1, period_years)))
+        metrics = wind_service.compute_portfolio_metrics(
+            allocations_list, period_years=int(max(1, period_years)),
+            cached_nav_df=cached_nav_df,
+        )
         logger.info(f"[智选] compute_portfolio_metrics 返回: source={metrics.get('source')}, keys={list(metrics.keys())}")
-        if metrics.get("source") in ["wind", "tushare"]:
+        if metrics.get("source") in ["wind", "tushare", "cached"]:
             return {
                 "ann_return_pct": metrics.get("ann_return_pct", "N/A"),
                 "ann_vol_pct": metrics.get("ann_vol_pct", "N/A"),
@@ -939,6 +1012,7 @@ def _run_news_pipeline(
     code_to_name: dict,
     wind_service,
     _nfe, _blv,
+    cached_nav_df=None,
 ) -> dict:
     """新闻资讯调仓管线: 新闻采集 → 6因子提取 → 资产观点映射 → 权重偏移 → KPI。"""
     news_factors = {}
@@ -946,29 +1020,45 @@ def _run_news_pipeline(
     asset_views = {}
     new_weights = dict(base_allocation)
 
+    # ── Step 1: 新闻因子提取 ──
     try:
-        # Step 1: 新闻因子提取
         news_data = _nfe.extract_factors_with_cache(model_choice="DeepSeek-Chat")
         if news_data and "factors" in news_data:
             news_factors = news_data["factors"]
             news_digest = news_data.get("headlines_digest", "")
+            logger.info(f"[智选·新闻] Step1 因子提取成功: {news_factors}")
+        else:
+            logger.warning(f"[智选·新闻] Step1 因子提取返回空: news_data={type(news_data).__name__}")
+    except Exception as e:
+        logger.warning(f"[智选·新闻] Step1 因子提取异常(降级): {e}")
 
-            # Step 2: 因子 → 8 大类资产观点
+    # ── Step 2: 因子 → 8 大类资产观点 ──
+    if news_factors:
+        try:
             asset_views = _blv.macro_factor_to_asset_views(news_factors)
+            logger.info(f"[智选·新闻] Step2 资产观点: {asset_views}")
+        except Exception as e:
+            logger.warning(f"[智选·新闻] Step2 资产观点映射异常(降级): {e}\n{traceback.format_exc()}")
 
-            # Step 3: 按资产类别观点偏移基金权重
+    # ── Step 3: 按资产类别观点偏移基金权重 ──
+    if asset_views:
+        try:
             new_weights = _apply_asset_views_to_weights(
                 base_allocation, asset_views, code_to_category
             )
-    except Exception as e:
-        logger.warning(f"[智选] 新闻管线异常(降级): {e}\n{traceback.format_exc()}")
+            # 诊断: 统计最大权重偏移
+            max_delta = max(abs(new_weights.get(c, 0) - base_allocation.get(c, 0)) for c in base_allocation)
+            logger.info(f"[智选·新闻] Step3 权重偏移完成: 最大偏移={max_delta:.2f}%")
+        except Exception as e:
+            logger.warning(f"[智选·新闻] Step3 权重偏移异常(降级): {e}\n{traceback.format_exc()}")
+            new_weights = dict(base_allocation)
 
     # Step 4: 构建调仓明细
     rebalance_detail = _build_rebalance_detail(base_allocation, new_weights, capital_yuan, code_to_name)
 
-    # Step 5: 用 Wind 真实数据计算 KPI
+    # Step 5: 用 Wind/Tushare 真实数据计算 KPI
     new_alloc_list = [{"code": c, "weight_pct": w} for c, w in new_weights.items()]
-    kpi = _compute_real_kpi(wind_service, new_alloc_list, period_years)
+    kpi = _compute_real_kpi(wind_service, new_alloc_list, period_years, cached_nav_df=cached_nav_df)
 
     return {
         "label": "新闻资讯调仓",
@@ -991,6 +1081,7 @@ def _run_report_pipeline(
     report_bytes_list: list,
     report_names: list,
     _blv,
+    cached_nav_df=None,
 ) -> dict:
     """研报调仓管线: PDF提取 → MoE投委会 → 资产观点 → 权重偏移 → KPI。"""
     report_factors = {}
@@ -1083,7 +1174,7 @@ def _run_report_pipeline(
 
     # Step 6: KPI
     new_alloc_list = [{"code": c, "weight_pct": w} for c, w in new_weights.items()]
-    kpi = _compute_real_kpi(wind_service, new_alloc_list, period_years)
+    kpi = _compute_real_kpi(wind_service, new_alloc_list, period_years, cached_nav_df=cached_nav_df)
 
     return {
         "label": "研报资讯调仓",
@@ -1104,17 +1195,32 @@ def _apply_asset_views_to_weights(
     """
     根据资产类别观点偏移基金权重。
     看多的类别加权, 看空的减权, 然后归一化。
+
+    放大系数说明:
+      asset_views 来自 macro_factor_to_asset_views (tanh 归一化, [-1, 1])。
+      典型值范围 ±0.05~0.50。使用 3.0 放大可产生约 ±15%~150% 的权重偏移,
+      归一化后实际变动幅度为 ±1%~5% 左右, 与研报管线一致。
     """
+    AMPLIFY = 3.0  # 放大系数 (原 0.3 过于保守导致零偏移)
+    _unmapped_count = 0
     new_weights = {}
     for code, old_w in base_allocation.items():
         category = code_to_category.get(code, "")
         view_score = asset_views.get(category, 0.0)
 
+        if not category:
+            _unmapped_count += 1
+
         # 偏移公式: 新权重 = 旧权重 × (1 + view_score × 放大系数)
-        # view_score ∈ [-1, 1], 放大系数 0.3 → 最大 ±30% 偏移
-        multiplier = 1.0 + float(view_score) * 0.3
+        multiplier = 1.0 + float(view_score) * AMPLIFY
         new_w = max(0.1, old_w * multiplier)
         new_weights[code] = new_w
+
+    if _unmapped_count > 0:
+        logger.warning(
+            f"[智选] _apply_asset_views_to_weights: {_unmapped_count}/{len(base_allocation)} "
+            f"只基金未匹配资产类别 (code_to_category未命中), 这些基金将获得零偏移"
+        )
 
     # 归一化回 100%
     total = sum(new_weights.values())
@@ -1366,6 +1472,8 @@ def _backtest_sync(portfolios: dict, benchmarks: list) -> dict:
     current_year = datetime.now().year
     years = list(range(current_year - 5, current_year))  # 过去5年
 
+    logger.info(f"[智选回测] 启动: {len(portfolios)} 个配置方案, {len(benchmarks)} 个指数, 年份={years}")
+
     # ── 获取宽基指数年度收益率 (优先缓存, 过期后极简 Wind 请求) ──
     cached = _load_backtest_cache()
     benchmark_returns = {}
@@ -1408,26 +1516,84 @@ def _backtest_sync(portfolios: dict, benchmarks: list) -> dict:
         all_codes.update(weights.keys())
     all_codes = list(all_codes)
     
-    # 提取过去 5 年的日净值（通过 Tushare）
+    logger.info(f"[智选回测] 配置方案: {list(portfolios.keys())}, 全部基金代码: {len(all_codes)} 只")
+
+    if not all_codes:
+        logger.warning("[智选回测] 无基金代码, 跳过组合历史回测")
+        return {
+            "status": "success",
+            "years": [str(y) for y in years],
+            "portfolios_returns": {},
+            "benchmark_returns": benchmark_returns,
+        }
+    
+    # 提取过去 5 年的日净值
     start_date_str = f"{years[0] - 1}-12-20"  # 获取前一年底的数据作为截面基准
     end_date_str = f"{years[-1]}-12-31"
     
     df_nav = None
+
+    # ── 尝试 Wind ──
     try:
-        from scripts.tushare_fetcher import fetch_fund_nav
-        if all_codes:
-            df_nav = fetch_fund_nav(all_codes, start_date_str, end_date_str)
+        from WindPy import w
+        if w.isconnected():
+            start_ts = start_date_str
+            end_ts = end_date_str
+            res = w.wsd(','.join(all_codes), "nav_adj", start_ts, end_ts, "")
+            if res.ErrorCode == 0 and res.Data:
+                import pandas as pd
+                if len(all_codes) == 1:
+                    df_wind = pd.DataFrame({all_codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
+                else:
+                    df_wind = pd.DataFrame(dict(zip(all_codes, res.Data)), index=pd.to_datetime(res.Times))
+                # 检查是否都是 None
+                non_null_cols = [c for c in df_wind.columns if df_wind[c].notna().sum() > 10]
+                if non_null_cols:
+                    df_nav = df_wind[non_null_cols]
+                    logger.info(f"[智选回测] Wind NAV: {len(df_nav.columns)} 列, {len(df_nav)} 行")
+                else:
+                    logger.warning(f"[智选回测] Wind NAV 全为 None, 降级到 Tushare")
+    except ImportError:
+        pass
     except Exception as e:
-        logger.warning(f"[智选回测] Tushare 兜底获取基金净值失败，将返回0.0收益: {e}")
+        logger.warning(f"[智选回测] Wind NAV 异常: {e}")
+
+    # ── Tushare 兜底 ──
+    if df_nav is None or df_nav.empty:
+        try:
+            import importlib.util, os as _os
+            _tushare_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                "..", "scripts", "tushare_fetcher.py"
+            )
+            _tushare_path = _os.path.normpath(_tushare_path)
+            if not _os.path.exists(_tushare_path):
+                _tushare_path = _os.path.join(
+                    _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                    "scripts", "tushare_fetcher.py"
+                )
+                _tushare_path = _os.path.normpath(_tushare_path)
+            logger.info(f"[智选回测] Tushare NAV: 路径={_tushare_path}, 存在={_os.path.exists(_tushare_path)}")
+            _spec = importlib.util.spec_from_file_location("tushare_fetcher_backtest", _tushare_path)
+            _ts_mod = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_ts_mod)
+            df_nav = _ts_mod.fetch_fund_nav(all_codes, start_date_str, end_date_str)
+            if df_nav is not None and not df_nav.empty:
+                logger.info(f"[智选回测] Tushare NAV 成功: {len(df_nav.columns)} 列, {len(df_nav)} 行")
+            else:
+                logger.warning("[智选回测] Tushare NAV 返回空")
+        except Exception as e:
+            logger.warning(f"[智选回测] Tushare 兜底获取基金净值失败: {e}\n{traceback.format_exc()}")
 
     for label, weights in portfolios.items():
         pret = {}
         if df_nav is not None and not df_nav.empty:
             valid_codes = [c for c in weights.keys() if c in df_nav.columns]
+            logger.info(f"[智选回测] {label}: {len(valid_codes)}/{len(weights)} 只基金命中 NAV")
             if valid_codes:
                 import pandas as pd
                 base_weights = np.array([weights[c] for c in valid_codes])
-                df_returns = df_nav[valid_codes].pct_change().dropna(how='all')
+                df_returns = df_nav[valid_codes].pct_change(fill_method=None).dropna(how='all')
                 
                 # ── 动态重加权 (与组合真实走势一致) ──
                 portfolio_returns_ts = []
@@ -1451,17 +1617,24 @@ def _backtest_sync(portfolios: dict, benchmarks: list) -> dict:
                     grouped = df_port_ret.groupby('year')
                     for year, group in grouped:
                         if year in years:
-                            # 剔除异常值或无有效数据的短月
-                            if len(group) > 50:  # 当年至少需要50个交易日才具备代表性
+                            n_days = len(group)
+                            if n_days > 50:  # 当年至少需要50个交易日才具备代表性
                                 ann_ret = (1 + group['ret']).prod() - 1.0
                                 pret[str(year)] = round(float(ann_ret * 100), 2)
+                                logger.info(f"[智选回测] {label} {year}: {n_days}天, ret={pret[str(year)]}%")
+                            else:
+                                logger.warning(f"[智选回测] {label} {year}: 仅 {n_days} 天 (<50), 跳过")
+        else:
+            logger.warning(f"[智选回测] {label}: 无 NAV 数据可用")
                                 
-        # 补全缺失年份
+        # 补全缺失年份 — 使用 None 而非 0.0, 前端区分 "无数据" 和 "零收益"
         for y in years:
             if str(y) not in pret:
-                pret[str(y)] = 0.0
+                pret[str(y)] = None
                 
         portfolios_returns[label] = pret
+
+    logger.info(f"[智选回测] 完成: {portfolios_returns}")
 
     return {
         "status": "success",
