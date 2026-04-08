@@ -703,7 +703,7 @@
                   <div v-if="data.bypassed" style="padding:32px;text-align:center;color:#94A3B8;font-size:13px;">
                     ⚠️ {{ data.reason || 'EGARCH 已旁路' }}
                   </div>
-                  <div v-else :ref="el => { if (el) egarchRefs[key] = el }" style="height:240px;"></div>
+                  <div v-else :ref="el => onEgarchRef(el, key, data)" style="height:240px;"></div>
                 </div>
               </template>
             </div>
@@ -944,6 +944,87 @@ function getTextAnchor(idx, total) {
 // Track which EGARCH/PCA charts have been initialized to avoid duplicate init
 const egarchInitialized = reactive({})
 const pcaInitialized = reactive({})
+// Keep track of ResizeObservers for cleanup
+const egarchObservers = reactive({})
+
+// ── Robust EGARCH chart initialization via ref callback ──
+function initEgarchChart(el, key, data) {
+  if (!el || !data || data.bypassed) return false
+  if (egarchInitialized[key]) return true
+  // Element must have actual layout dimensions
+  if (el.offsetWidth === 0 || el.offsetHeight === 0) return false
+  
+  const chart = echarts.init(el)
+  chart.setOption({
+    tooltip: { trigger: 'axis', formatter: params => {
+      const p = params[0]
+      return `<b>${p.name}</b><br/>条件波动率: ${(p.value * 100).toFixed(2)}%`
+    }},
+    xAxis: { type: 'category', data: data.dates, axisLabel: { fontSize: 10, color: '#94A3B8', rotate: 30, interval: Math.floor(data.dates.length / 6) }, axisLine: { lineStyle: { color: '#E2E8F0' } }, splitLine: { show: false } },
+    yAxis: { type: 'value', axisLabel: { formatter: v => (v * 100).toFixed(1) + '%', fontSize: 10, color: '#94A3B8' }, splitLine: { lineStyle: { color: '#F1F5F9' } } },
+    grid: { left: 50, right: 16, top: 16, bottom: 40 },
+    series: [{
+      type: 'line',
+      data: data.values,
+      smooth: true,
+      showSymbol: false,
+      lineStyle: { color: '#1E293B', width: 1.5 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(30,41,59,0.12)' }, { offset: 1, color: 'rgba(30,41,59,0)' }] } },
+      markLine: { data: [{ type: 'average', name: '均值' }], lineStyle: { color: '#EF4444', type: 'dashed' }, label: { formatter: p => '均值 ' + (p.value * 100).toFixed(2) + '%', fontSize: 10 } },
+    }]
+  })
+  egarchInitialized[key] = true
+  // Disconnect observer if one exists
+  if (egarchObservers[key]) {
+    egarchObservers[key].disconnect()
+    delete egarchObservers[key]
+  }
+  return true
+}
+
+function onEgarchRef(el, key, data) {
+  if (!el) {
+    // Element unmounted — clean up
+    egarchRefs[key] = null
+    if (egarchObservers[key]) {
+      egarchObservers[key].disconnect()
+      delete egarchObservers[key]
+    }
+    return
+  }
+  egarchRefs[key] = el
+  
+  // Attempt immediate initialization
+  if (initEgarchChart(el, key, data)) return
+  
+  // Element exists but has no dimensions yet — use ResizeObserver to wait for layout
+  if (egarchObservers[key]) {
+    egarchObservers[key].disconnect()
+  }
+  const observer = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+        initEgarchChart(el, key, data)
+      }
+    }
+  })
+  observer.observe(el)
+  egarchObservers[key] = observer
+}
+
+// ── Cleanup on component unmount ──
+onUnmounted(() => {
+  Object.keys(egarchObservers).forEach(k => {
+    egarchObservers[k]?.disconnect()
+    delete egarchObservers[k]
+  })
+  Object.keys(egarchRefs).forEach(k => {
+    if (egarchRefs[k]) {
+      const inst = echarts.getInstanceByDom(egarchRefs[k])
+      if (inst) inst.dispose()
+    }
+  })
+})
 
 watch(rebalResult, async (val) => {
   if (!val) return
@@ -967,34 +1048,14 @@ function renderRebalCharts(result) {
   // Radar charts are now SVG-based (no ECharts needed)
 
   // ── EGARCH line charts ──
+  // Now handled by onEgarchRef + ResizeObserver, but still attempt here as fallback
   if (result.egarch) {
     for (const [key, data] of Object.entries(result.egarch)) {
       if (data.bypassed) continue
       if (egarchInitialized[key]) continue  // already rendered
       const el = egarchRefs[key]
       if (!el) continue
-      // Ensure the element has dimensions (is visible in DOM)
-      if (el.offsetWidth === 0 || el.offsetHeight === 0) continue
-      const chart = echarts.init(el)
-      chart.setOption({
-        tooltip: { trigger: 'axis', formatter: params => {
-          const p = params[0]
-          return `<b>${p.name}</b><br/>条件波动率: ${(p.value * 100).toFixed(2)}%`
-        }},
-        xAxis: { type: 'category', data: data.dates, axisLabel: { fontSize: 10, color: '#94A3B8', rotate: 30, interval: Math.floor(data.dates.length / 6) }, axisLine: { lineStyle: { color: '#E2E8F0' } }, splitLine: { show: false } },
-        yAxis: { type: 'value', axisLabel: { formatter: v => (v * 100).toFixed(1) + '%', fontSize: 10, color: '#94A3B8' }, splitLine: { lineStyle: { color: '#F1F5F9' } } },
-        grid: { left: 50, right: 16, top: 16, bottom: 40 },
-        series: [{
-          type: 'line',
-          data: data.values,
-          smooth: true,
-          showSymbol: false,
-          lineStyle: { color: '#1E293B', width: 1.5 },
-          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(30,41,59,0.12)' }, { offset: 1, color: 'rgba(30,41,59,0)' }] } },
-          markLine: { data: [{ type: 'average', name: '均值' }], lineStyle: { color: '#EF4444', type: 'dashed' }, label: { formatter: p => '均值 ' + (p.value * 100).toFixed(2) + '%', fontSize: 10 } },
-        }]
-      })
-      egarchInitialized[key] = true
+      initEgarchChart(el, key, data)
     }
   }
 
@@ -1042,6 +1103,19 @@ async function runRebalPipeline() {
   // Reset chart initialization tracking for new run
   Object.keys(egarchInitialized).forEach(k => delete egarchInitialized[k])
   Object.keys(pcaInitialized).forEach(k => delete pcaInitialized[k])
+  // Disconnect all EGARCH ResizeObservers from previous run
+  Object.keys(egarchObservers).forEach(k => {
+    egarchObservers[k]?.disconnect()
+    delete egarchObservers[k]
+  })
+  // Dispose existing ECharts instances on EGARCH elements
+  Object.keys(egarchRefs).forEach(k => {
+    if (egarchRefs[k]) {
+      const existing = echarts.getInstanceByDom(egarchRefs[k])
+      if (existing) existing.dispose()
+    }
+    delete egarchRefs[k]
+  })
 
   const formData = new FormData()
   for (const f of rebalReports.value) {

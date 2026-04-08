@@ -17,126 +17,171 @@
     <div style="padding:24px 32px;max-width:1200px;margin:0 auto;">
       <div class="section-title">模块一：核心大模型互动区</div>
 
+      <!-- ═══ Step 1: EDB 数据检索 (真实 API) ═══ -->
       <div class="card" style="margin-bottom:24px;">
         <div class="card-title">📉 EDB 数据检索提取</div>
         <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
           从宏观数据库抽取当月数十项高密集的经济基本面历史数据。
         </p>
         <AsyncButton
-          :action="mockEdbFetch"
+          :action="doEdbFetch"
           type="primary"
           text="🚀 启动 EDB 数据检索提取"
-          @success="() => { edbResult = true; if(currentStep < 1) currentStep = 1; }"
+          @success="() => { if(currentStep < 1) currentStep = 1; }"
         />
         
-        <div v-if="edbResult" class="fade-in" style="margin-top:20px;padding:16px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
+        <div v-if="edbData" class="fade-in" style="margin-top:20px;padding:16px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
           <div style="display:flex;gap:24px;">
-            <div style="flex:1;border:2px dashed #CBD5E1;border-radius:8px;padding:32px;text-align:center;background:#fff;">
+            <div style="flex:1;border-radius:8px;padding:24px;background:#fff;border:1px solid #E2E8F0;">
               <div style="font-size:32px;margin-bottom:8px;">⏱️</div>
-              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">“经济时钟”(美林时钟) 图谱</div>
-              <div style="font-size:12px;color:var(--text-muted);">(当前位于：复苏期 / 宽信用)</div>
-            </div>
-            <div style="flex:1;border:2px dashed #CBD5E1;border-radius:8px;padding:32px;text-align:center;background:#fff;">
-              <div style="font-size:32px;margin-bottom:8px;">📊</div>
-              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">EDB Z-Score 散点图</div>
-              <div style="font-size:12px;color:var(--text-muted);">(12 项核心指标景气度均 > 0.5)</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card" style="margin-bottom:24px;transition:opacity 0.3s;" :style="{ opacity: currentStep >= 1 ? 1 : 0.5, pointerEvents: currentStep >= 1 ? 'auto' : 'none' }">
-        <div class="card-title">🤖 多智能体投研分析会</div>
-        <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
-          基于 EDB 经济数据，并行唤醒 3 个 AI 专家 (多头分析师、空头分析师、长线宏观专家) 进行 Debate。
-        </p>
-        <AsyncButton
-          :action="mockDebateFetch"
-          type="primary"
-          text="🧠 运行 Kimi 虚拟投研分析会"
-          @success="() => { debateResult = true; if(currentStep < 2) currentStep = 2; }"
-        />
-        
-        <div v-if="debateResult" class="fade-in" style="margin-top:20px;display:flex;gap:24px;">
-          <div style="flex:2;background:#F4F6F6;border-radius:8px;padding:16px;border:1px solid #D0ECE7;">
-            <div v-for="(log, i) in debateLogs" :key="i" style="margin-bottom:16px;display:flex;gap:12px;" class="fade-in" :style="{animationDelay: i * 0.4 + 's'}">
-              <div style="width:40px;height:40px;border-radius:50%;background:#1A5276;color:#FFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0;"
-                   :style="{background: log.avatar === '空' ? '#C0392B' : (log.avatar === '多' ? '#10B981' : '#2E86C1')}">
-                {{ log.avatar }}
-              </div>
-              <div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">{{ log.role }}</div>
-                <div style="background:#FFF;padding:10px 14px;border-radius:0 8px 8px 8px;font-size:13px;color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,0.05);line-height:1.6;">
-                  {{ log.content }}
+              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">"经济时钟"(美林时钟) 图谱</div>
+              <div style="font-size:12px;color:var(--text-muted);">(当前位于：{{ edbData.market_state || '计算中...' }})</div>
+              <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                <div style="padding:6px 10px;background:#F0FDF4;border-radius:6px;font-size:12px;">
+                  <span style="color:var(--text-muted);">宏观</span>
+                  <span style="font-weight:600;color:#10B981;margin-left:4px;">{{ edbData.macro_total?.toFixed(3) }}</span>
+                </div>
+                <div style="padding:6px 10px;background:#EFF6FF;border-radius:6px;font-size:12px;">
+                  <span style="color:var(--text-muted);">估值</span>
+                  <span style="font-weight:600;color:#3B82F6;margin-left:4px;">{{ edbData.valuation_total?.toFixed(3) }}</span>
+                </div>
+                <div style="padding:6px 10px;background:#FEF2F2;border-radius:6px;font-size:12px;">
+                  <span style="color:var(--text-muted);">风险</span>
+                  <span style="font-weight:600;color:#EF4444;margin-left:4px;">{{ edbData.risk_total?.toFixed(3) }}</span>
                 </div>
               </div>
             </div>
+            <div style="flex:1;border-radius:8px;padding:24px;background:#fff;border:1px solid #E2E8F0;">
+              <div style="font-size:32px;margin-bottom:8px;">📊</div>
+              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">EDB 综合评分</div>
+              <div style="font-size:36px;font-weight:800;color:var(--navy);margin-top:8px;font-family:'JetBrains Mono',monospace;">
+                {{ edbData.composite_score?.toFixed(3) }}
+              </div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+                (评分 > 0 → 扩张期 / 评分 < 0 → 收缩期)
+              </div>
+            </div>
           </div>
-          <div style="flex:1;border:2px dashed #D0ECE7;border-radius:8px;padding:32px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:#E8F8F5;">
-            <div style="font-size:32px;margin-bottom:8px;">🕸️</div>
-            <div style="font-weight:700;color:#0E6251;margin-bottom:4px;font-size:15px;">情绪雷达图</div>
-            <div style="font-size:12px;color:#117864;">(多空强弱对比：多头显著占优)</div>
+        </div>
+
+        <!-- EDB 异常提示 -->
+        <div v-if="edbError" style="margin-top:12px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:13px;color:#DC2626;">
+          ⚠️ {{ edbError }}
+        </div>
+      </div>
+
+      <!-- ═══ Step 2: 多智能体投研分析会 (真实 SSE) ═══ -->
+      <div class="card" style="margin-bottom:24px;transition:opacity 0.3s;" :style="{ opacity: currentStep >= 1 ? 1 : 0.5, pointerEvents: currentStep >= 1 ? 'auto' : 'none' }">
+        <div class="card-title">🤖 多智能体投研分析会</div>
+        <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
+          基于 EDB 经济数据，并行唤醒多个 AI 专家 (MoE 多模型集成 + 3-Agent 博弈) 进行实时辩论与共识裁决。
+        </p>
+        <AsyncButton
+          :action="doDebateFetch"
+          type="primary"
+          text="🧠 运行 AI 虚拟投研分析会"
+          @success="() => { if(currentStep < 2) currentStep = 2; }"
+        />
+        
+        <div v-if="debateLogs.length > 0 || isDebating" class="fade-in" style="margin-top:20px;display:flex;gap:24px;">
+          <div style="flex:2;background:#F4F6F6;border-radius:8px;padding:16px;border:1px solid #D0ECE7;max-height:500px;overflow-y:auto;" ref="debateStreamRef">
+            <div v-for="(log, i) in debateLogs" :key="i" style="margin-bottom:16px;display:flex;gap:12px;" class="fade-in" :style="{animationDelay: Math.min(i * 0.15, 2) + 's'}">
+              <div style="width:40px;height:40px;border-radius:50%;background:#1A5276;color:#FFF;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0;"
+                   :style="{background: getLogColor(log)}">
+                {{ getLogAvatar(log) }}
+              </div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px;">{{ getLogRole(log) }}</div>
+                <div style="background:#FFF;padding:10px 14px;border-radius:0 8px 8px 8px;font-size:13px;color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,0.05);line-height:1.6;word-break:break-word;">
+                  {{ getLogText(log) }}
+                </div>
+              </div>
+            </div>
+            <div v-if="isDebating" style="display:flex;align-items:center;gap:8px;padding:12px;">
+              <div class="typing-indicator">分析师思考中<span>.</span><span>.</span><span>.</span></div>
+            </div>
+          </div>
+          <div style="flex:1;border-radius:8px;padding:24px;text-align:center;display:flex;flex-direction:column;justify-content:center;background:#E8F8F5;border:1px solid #D0ECE7;">
+            <div v-if="debateViews">
+              <div style="font-size:28px;margin-bottom:8px;">🏛️</div>
+              <div style="font-weight:700;color:#0E6251;margin-bottom:12px;font-size:15px;">投委会最终共识</div>
+              <div v-for="(val, key) in debateViews" :key="key" style="text-align:left;padding:4px 0;font-size:12px;border-bottom:1px dashed #D0ECE7;">
+                <span style="font-weight:600;color:var(--navy);">{{ key }}</span>
+                <span style="float:right;font-family:'JetBrains Mono',monospace;" :style="{color: val.view > 0 ? '#EF4444' : (val.view < 0 ? '#10B981' : '#64748B')}">
+                  {{ val.view > 0 ? '+' : '' }}{{ (val.view * 100).toFixed(1) }}% ({{ (val.confidence * 100).toFixed(0) }}%)
+                </span>
+              </div>
+            </div>
+            <div v-else>
+              <div style="font-size:32px;margin-bottom:8px;">🕸️</div>
+              <div style="font-weight:700;color:#0E6251;margin-bottom:4px;font-size:15px;">情绪雷达图</div>
+              <div style="font-size:12px;color:#117864;">(等待辩论完成后生成共识...)</div>
+            </div>
           </div>
         </div>
       </div>
 
+      <!-- ═══ Step 3: 宏观分析与资产配置 (真实 API) ═══ -->
       <div class="card" style="margin-bottom:24px;transition:opacity 0.3s;" :style="{ opacity: currentStep >= 2 ? 1 : 0.5, pointerEvents: currentStep >= 2 ? 'auto' : 'none' }">
         <div class="card-title">🎯 宏观分析与配置运算</div>
         <p style="color:var(--text-secondary);font-size:13px;margin-bottom:12px;">
-          汇集前序观点的最终结论，计算出各宏观大类资产的配置建议比例（百分比）。
+          汇集前序观点的最终结论，通过宏观象限定位 + 因子风险平价引擎计算各大类资产的配置建议比例。
         </p>
         <AsyncButton
-          :action="mockAllocation"
+          :action="doAllocation"
           type="primary"
           text="🎯 执行宏观分析与资产配置运算"
-          @success="() => { allocationResult = true; if(currentStep < 3) currentStep = 3; }"
+          @success="() => { if(currentStep < 3) currentStep = 3; }"
         />
         
         <div v-if="allocationResult" class="fade-in" style="margin-top:20px;padding:24px;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;">
-          <div style="display:flex;gap:32px;align-items:center;">
-            <div style="width:200px;height:200px;border:16px solid #3498DB;border-radius:50%;border-top-color:#1ABC9C;border-right-color:#F1C40F;border-left-color:#E74C3C;position:relative;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 2px 5px rgba(0,0,0,0.05);">
-              <div style="text-align:center;background:#fff;width:140px;height:140px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
-                <div style="font-weight:700;font-size:24px;color:var(--navy);">100%</div>
-                <div style="font-size:11px;color:var(--text-muted);">目标配置比例</div>
+          <div style="display:flex;gap:32px;align-items:start;">
+            <!-- 象限信息 -->
+            <div v-if="quadrantData" style="width:220px;flex-shrink:0;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                <div style="width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;background:#EDF2F7;">
+                  {{ qIcons[quadrantData.current_quadrant] || '🧭' }}
+                </div>
+                <div>
+                  <div style="font-weight:700;font-size:16px;color:var(--navy);">{{ quadrantData.quadrant_label }}</div>
+                  <div style="font-size:11px;color:var(--text-muted);">Markov: {{ quadrantData.markov_regime }} ({{ ((quadrantData.markov_confidence||0)*100).toFixed(0) }}%)</div>
+                </div>
               </div>
+              <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;">{{ quadrantData.quadrant_description }}</div>
             </div>
+            <!-- 配置比例表 -->
             <div style="flex:1;">
               <table class="data-table" style="width:100%;">
                 <thead>
                   <tr>
                     <th>大类资产</th>
                     <th style="text-align:right;">建议目标权重</th>
-                    <th>配置逻辑说明</th>
+                    <th>可视化</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td style="font-weight:600;color:var(--navy);">大盘价值 (H/A)</td>
-                    <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#EF4444;font-weight:600;">35.0%</td>
-                    <td style="font-size:12px;color:var(--text-secondary);">宽信用周期确立，低估值顺周期资产胜率最高。</td>
-                  </tr>
-                  <tr>
-                    <td style="font-weight:600;color:var(--navy);">纯债固收</td>
-                    <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">30.0%</td>
-                    <td style="font-size:12px;color:var(--text-secondary);">作为组合压舱石，防御系统性下行风险。</td>
-                  </tr>
-                  <tr>
-                    <td style="font-weight:600;color:var(--navy);">高成长主题</td>
-                    <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#EF4444;font-weight:600;">20.0%</td>
-                    <td style="font-size:12px;color:var(--text-secondary);">维持一定的高景气度行业暴露以获取超额收益。</td>
-                  </tr>
-                  <tr>
-                    <td style="font-weight:600;color:var(--navy);">黄金商品</td>
-                    <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#F59E0B;font-weight:600;">15.0%</td>
-                    <td style="font-size:12px;color:var(--text-secondary);">对冲海外潜在的输入性通胀和地缘尾部风险。</td>
+                  <tr v-for="(w, asset) in allocationResult" :key="asset">
+                    <td style="font-weight:600;color:var(--navy);">{{ asset }}</td>
+                    <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;" :style="{color: w > 20 ? '#EF4444' : (w > 10 ? '#F59E0B' : '#64748B')}">{{ w.toFixed(1) }}%</td>
+                    <td>
+                      <div style="width:100%;height:10px;background:#F1F5F9;border-radius:4px;overflow:hidden;">
+                        <div :style="{width: w + '%', height:'100%', background: 'var(--sovereign-accent, #0c56d0)', borderRadius:'4px', transition:'width 0.6s ease'}"></div>
+                      </div>
+                    </td>
                   </tr>
                 </tbody>
               </table>
             </div>
           </div>
         </div>
+
+        <!-- 配置异常提示 -->
+        <div v-if="allocError" style="margin-top:12px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:13px;color:#DC2626;">
+          ⚠️ {{ allocError }}
+        </div>
       </div>
 
+      <!-- ═══ Step 4: 底层资产到基金映射 (真实 API) ═══ -->
       <div class="section-title" style="margin-top:48px;">模块二：底层资产到基金映射区</div>
       
       <div class="card" style="margin-bottom:48px;transition:opacity 0.3s;" :style="{ opacity: currentStep >= 3 ? 1 : 0.5, pointerEvents: currentStep >= 3 ? 'auto' : 'none' }">
@@ -145,13 +190,12 @@
           在给定的资产配置目标下，穿透底层数据库，自动从候选池寻找最契合的基金组建实盘组合。
         </p>
         <AsyncButton
-          :action="mockFundMapping"
+          :action="doFundMapping"
           type="primary"
           text="🔍 一键配置 (根据权重自动匹配实体基金)"
-          @success="() => { fundMappingResult = true; }"
         />
         
-        <div v-if="fundMappingResult" class="fade-in" style="margin-top:24px;">
+        <div v-if="matchedFunds.length > 0" class="fade-in" style="margin-top:24px;">
           <div style="overflow-x:auto;margin-bottom:24px;">
             <table class="holdings-table">
               <thead>
@@ -164,50 +208,39 @@
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--navy);">000979.OF</td>
-                  <td>核心资产精选混合</td>
-                  <td><span style="background:#EBF5FB;color:#2E86C1;padding:2px 6px;border-radius:4px;font-size:11px;">大盘价值 (H/A)</span></td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#10B981;font-weight:600;">92.4%</td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">35.00%</td>
-                </tr>
-                <tr>
-                  <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--navy);">001203.OF</td>
-                  <td>稳健纯债债券A</td>
-                  <td><span style="background:#F4F6F6;color:#34495E;padding:2px 6px;border-radius:4px;font-size:11px;">纯债固收</span></td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#10B981;font-weight:600;">98.1%</td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">30.00%</td>
-                </tr>
-                <tr>
-                  <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--navy);">002657.OF</td>
-                  <td>高成长行业精选</td>
-                  <td><span style="background:#FDEDEC;color:#C0392B;padding:2px 6px;border-radius:4px;font-size:11px;">高成长主题</span></td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#F59E0B;font-weight:600;">85.3%</td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">20.00%</td>
-                </tr>
-                <tr>
-                  <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--navy);">518880.SH</td>
-                  <td>华安黄金ETF</td>
-                  <td><span style="background:#FEF9E7;color:#B7950B;padding:2px 6px;border-radius:4px;font-size:11px;">黄金商品</span></td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;color:#10B981;font-weight:600;">99.5%</td>
-                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">15.00%</td>
+                <tr v-for="cf in matchedFunds" :key="cf.code">
+                  <td style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--navy);">{{ cf.code }}</td>
+                  <td>{{ cf.name }}</td>
+                  <td>
+                    <span style="background:#EBF5FB;color:#2E86C1;padding:2px 6px;border-radius:4px;font-size:11px;">{{ cf.category }}</span>
+                  </td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;" :style="{color: (cf.match_score||0) > 90 ? '#10B981' : '#F59E0B'}">
+                    {{ ((cf.match_score || cf.weight * 100 + 60) ).toFixed(1) }}%
+                  </td>
+                  <td style="text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">{{ (cf.weight * 100).toFixed(2) }}%</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
+          <!-- 下方可视化占位 -->
           <div style="display:flex;gap:24px;">
-            <div style="flex:2;border:1px solid #E2E8F0;background:#F8FAFC;border-radius:8px;padding:32px 24px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center;">
-              <div style="font-size:32px;margin-bottom:8px;">📈</div>
-              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">组合历史回测走势图 (Echarts)</div>
-              <div style="font-size:12px;color:var(--text-muted);">(基于近 3 年数据绘制从 1.0 起跑的净值走势和最大回撤折线图)</div>
+            <div style="flex:2;border:1px solid #E2E8F0;background:#F8FAFC;border-radius:8px;padding:24px;text-align:center;">
+              <div style="font-size:28px;margin-bottom:8px;">📈</div>
+              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:14px;">组合已配置完成</div>
+              <div style="font-size:12px;color:var(--text-muted);">可前往「智选平台 → 业绩回测」模块进行全量历史净值回测</div>
             </div>
-            <div style="flex:1;border:1px solid #E2E8F0;background:#F8FAFC;border-radius:8px;padding:32px 24px;text-align:center;display:flex;flex-direction:column;justify-content:center;align-items:center;">
-              <div style="font-size:32px;margin-bottom:8px;">🔥</div>
-              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:15px;">成分相关性 Heatmap</div>
-              <div style="font-size:12px;color:var(--text-muted);">(确保各底层标的呈低相关甚至负相关)</div>
+            <div style="flex:1;border:1px solid #E2E8F0;background:#F8FAFC;border-radius:8px;padding:24px;text-align:center;">
+              <div style="font-size:28px;margin-bottom:8px;">🛡️</div>
+              <div style="font-weight:700;color:var(--navy);margin-bottom:4px;font-size:14px;">{{ matchedFunds.length }} 只基金</div>
+              <div style="font-size:12px;color:var(--text-muted);">通过底层穿透算法自动匹配</div>
             </div>
           </div>
+        </div>
+
+        <!-- 选基异常提示 -->
+        <div v-if="fundError" style="margin-top:12px;padding:10px 14px;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;font-size:13px;color:#DC2626;">
+          ⚠️ {{ fundError }}
         </div>
       </div>
     </div>
@@ -215,28 +248,217 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
+import { fetchEdbData, getMacroQuadrant, optimizeFactorRp, matchFunds } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
 
-const currentStep = ref(0) // 控制解耦模块和步骤（0=EDB, 1=Debate, 2=配置, 3=基金映射）
+const currentStep = ref(0)
 
-const edbResult = ref(false)
-const debateResult = ref(false)
-const allocationResult = ref(false)
-const fundMappingResult = ref(false)
+// ── Step 1: EDB 状态 ──
+const edbData = ref(null)
+const edbError = ref('')
 
-const debateLogs = ref([
-  { role: '多头分析师 (Kimi)', avatar: '多', content: '基于最新提取的 EDB 数据，12 项核心指标中有 9 项位于景气度荣枯线以上。信用脉冲连续两个月呈复苏态势，建议大幅超配权益，特别是顺周期的大盘价值板块拿满 35%！' },
-  { role: '空头分析师 (DeepSeek)', avatar: '空', content: '反对！虽然表观数据复苏，但地产和化债的长期约束仍在。海外通胀有二次抬升迹象，这说明系统性尾部风险未解除。我建议权益敞口不超过 20%，同时增加 15% 黄金商品作为对冲。' },
-  { role: '风控投委会 (主席)', avatar: '裁', content: '两位说的都有充足的底层数据支撑。综合来看，当前处于“宽信用+弱复苏”阶段，系统性崩盘概率低，但单边大牛市尚需政策强验证。我们取折中方案：权益总量控制在 55%（35%低估值价值压舱，20%成长博弈），30%固收吃票息，15%黄金全天候对冲海外地缘。' }
-])
+// ── Step 2: 辩论状态 ──
+const debateLogs = ref([])
+const isDebating = ref(false)
+const debateViews = ref(null)
+const debateStreamRef = ref(null)
 
-// Mock 异步任务（模拟延迟并拉起防连击 Loading）
-const mockEdbFetch = () => new Promise(resolve => setTimeout(resolve, 800))
-const mockDebateFetch = () => new Promise(resolve => setTimeout(resolve, 1500))
-const mockAllocation = () => new Promise(resolve => setTimeout(resolve, 600))
-const mockFundMapping = () => new Promise(resolve => setTimeout(resolve, 1200))
+// ── Step 3: 配置状态 ──
+const allocationResult = ref(null)
+const quadrantData = ref(null)
+const allocError = ref('')
 
+// ── Step 4: 选基状态 ──
+const matchedFunds = ref([])
+const fundError = ref('')
+
+// 象限图标
+const qIcons = {
+  recovery: '🌱',
+  overheat: '🔥',
+  stagflation: '⚠️',
+  deflation: '❄️',
+}
+
+// ═══════════════════════════════════════════════
+// Step 1: 真实 EDB 数据检索
+// ═══════════════════════════════════════════════
+async function doEdbFetch() {
+  edbError.value = ''
+  try {
+    const res = await fetchEdbData()
+    edbData.value = res.data?.data || res.data
+  } catch (e) {
+    edbError.value = `EDB 数据检索异常: ${e.response?.data?.detail || e.message}`
+    throw e
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Step 2: 真实多智能体投研辩论 (SSE 流式)
+// ═══════════════════════════════════════════════
+async function doDebateFetch() {
+  debateLogs.value = []
+  isDebating.value = true
+  debateViews.value = null
+
+  try {
+    const response = await fetch('/api/v1/ai/simulate_smart_selection_debate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: '基于 EDB 宏观数据的大类资产配置焦点' })
+    })
+
+    if (!response.body) throw new Error('ReadableStream not supported')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      let lines = buffer.split('\n\n')
+      buffer = lines.pop()
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const parsed = JSON.parse(line.substring(6))
+            if (parsed.type === 'log') {
+              debateLogs.value.push(parsed.content)
+              nextTick(() => {
+                const el = debateStreamRef.value
+                if (el) el.scrollTop = el.scrollHeight
+              })
+            } else if (parsed.type === 'finish') {
+              debateViews.value = parsed.bl_views
+            } else if (parsed.type === 'error') {
+              debateLogs.value.push(`❌ 错误: ${parsed.content}`)
+            }
+          } catch (e) {
+            console.error('SSE parse error', e)
+          }
+        }
+      }
+    }
+  } catch (e) {
+    debateLogs.value.push(`❌ 连接异常: ${e.message}`)
+    throw e
+  } finally {
+    isDebating.value = false
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Step 3: 真实宏观象限 + 因子风险平价配置
+// ═══════════════════════════════════════════════
+async function doAllocation() {
+  allocError.value = ''
+  try {
+    // 使用 EDB 数据构建因子得分 (如 EDB 未就绪则用温和默认值)
+    const factorScores = edbData.value ? {
+      "经济增长": Math.max(-1, Math.min(1, (edbData.value.macro_total || 0) * 2)),
+      "通胀商品": Math.max(-1, Math.min(1, -(edbData.value.risk_total || 0) * 1.5)),
+      "利率环境": Math.max(-1, Math.min(1, (edbData.value.valuation_total || 0) * 1.5)),
+      "信用扩张": Math.max(-1, Math.min(1, (edbData.value.macro_total || 0))),
+      "海外环境": 0.0,
+      "市场情绪": Math.max(-1, Math.min(1, (edbData.value.composite_score || 0) * 1.5)),
+    } : {
+      "经济增长": 0.3, "通胀商品": -0.2, "利率环境": 0.4,
+      "信用扩张": 0.1, "海外环境": 0.0, "市场情绪": 0.2,
+    }
+
+    // 1) 宏观象限定位
+    const qRes = await getMacroQuadrant({ factor_scores: factorScores })
+    quadrantData.value = qRes.data
+
+    // 2) 因子风险平价 → 目标配置
+    const rpRes = await optimizeFactorRp({
+      factor_scores: factorScores,
+      apply_regime: true,
+      max_volatility: 0.15,
+    })
+
+    // 组装配置结果
+    if (rpRes.data?.target_weights) {
+      allocationResult.value = {}
+      for (const [asset, w] of Object.entries(rpRes.data.target_weights)) {
+        allocationResult.value[asset] = +(w * 100).toFixed(1)
+      }
+    }
+  } catch (e) {
+    allocError.value = `宏观配置运算异常: ${e.response?.data?.detail || e.message}`
+    throw e
+  }
+}
+
+// ═══════════════════════════════════════════════
+// Step 4: 真实基金一键匹配
+// ═══════════════════════════════════════════════
+async function doFundMapping() {
+  fundError.value = ''
+  try {
+    if (!allocationResult.value) {
+      throw new Error('请先完成宏观配置运算')
+    }
+    const payload = {
+      target_allocation: allocationResult.value,
+      total_amount: 10000000,
+      target_return: 0.06,
+      max_volatility: 0.15,
+    }
+    const res = await matchFunds(payload)
+    matchedFunds.value = res.data?.matched_funds || []
+    if (matchedFunds.value.length === 0) {
+      fundError.value = '未匹配到任何基金，请检查候选基金池是否已初始化'
+    }
+  } catch (e) {
+    fundError.value = `基金匹配异常: ${e.response?.data?.detail || e.message}`
+    throw e
+  }
+}
+
+// ── SSE 日志美化辅助函数 ──
+function getLogAvatar(log) {
+  if (typeof log !== 'string') return '🤖'
+  if (log.includes('Agent A') || log.includes('宏观')) return 'A'
+  if (log.includes('Agent B') || log.includes('风控')) return 'B'
+  if (log.includes('Agent C') || log.includes('裁决')) return 'C'
+  if (log.includes('MoE') || log.includes('集成')) return '🔀'
+  if (log.includes('危机') || log.includes('Crisis')) return '🦢'
+  if (log.includes('因子') || log.includes('测谎')) return '🔬'
+  if (log.includes('✅')) return '✅'
+  if (log.includes('⚠️')) return '⚠️'
+  return '💬'
+}
+function getLogColor(log) {
+  if (typeof log !== 'string') return '#1A5276'
+  if (log.includes('Agent A') || log.includes('宏观')) return '#10B981'
+  if (log.includes('Agent B') || log.includes('风控')) return '#C0392B'
+  if (log.includes('Agent C') || log.includes('裁决')) return '#2E86C1'
+  if (log.includes('⚠️') || log.includes('异常')) return '#F59E0B'
+  if (log.includes('✅')) return '#10B981'
+  return '#1A5276'
+}
+function getLogRole(log) {
+  if (typeof log !== 'string') return 'System'
+  if (log.includes('Agent A')) return 'Agent A — 宏观研究员'
+  if (log.includes('Agent B')) return 'Agent B — 量化风控官'
+  if (log.includes('Agent C')) return 'Agent C — FOF 投资经理'
+  if (log.includes('MoE')) return 'MoE 多模型集成引擎'
+  if (log.includes('危机') || log.includes('Crisis')) return '危机前哨 (Crisis Sentinel)'
+  if (log.includes('因子')) return '因子交叉验证'
+  return 'System'
+}
+function getLogText(log) {
+  if (typeof log !== 'string') return String(log)
+  // Strip leading emojis for cleaner display
+  return log.replace(/^[\s🤖📊📈🛡️⚖️🔬🦢📡🚀✅⚠️❌📑💬🔍📂🗂️🧭📰📄🔒🔥]+/, '').trim() || log
+}
 </script>
 
 <style scoped>
@@ -283,4 +505,10 @@ const mockFundMapping = () => new Promise(resolve => setTimeout(resolve, 1200))
 .fade-in {
   animation: slideDown 0.4s ease forwards;
 }
+.typing-indicator span {
+  animation: blink 1.4s infinite both;
+}
+.typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0% { opacity: 0.2; } 20% { opacity: 1; } 100% { opacity: 0.2; } }
 </style>
