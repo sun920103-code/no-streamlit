@@ -216,111 +216,61 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     _me = _import_backend_service("markov_engine")
     get_current_macro_regime_mock = _me.get_current_macro_regime_mock
 
-    # ── Step 1: EDB 数据下载 + 因子评分 ──
-    logger.info("[智选] Step 1: 极速探测 Wind 连接状态...")
+    # ── Step 1: Tushare Markov Engine 宏观象限定位 ──
+    logger.info("[智选] Step 1: Tushare Markov Engine 宏观数据拉取...")
     
-    wind_actually_alive = False
-    
-    def _wind_probe_task():
-        try:
-            from WindPy import w
-            if not w.isconnected():
-                return False
-            # wsd 才能真正查出历史额度是否耗尽
-            probe = w.wsd("000001.SH", "close", "ED-1TD", "ED-1TD", "")
-            return probe.ErrorCode == 0
-        except Exception:
-            return False
-
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(_wind_probe_task)
-        try:
-            # 严格限制最多等 3 秒！如果不返回直接认定死亡。
-            wind_actually_alive = future.result(timeout=3.0)
-        except concurrent.futures.TimeoutError:
-            logger.warning("[智选] Wind 探针超时 (额度告警或死锁)! 强制放弃 Wind 判定！")
-            wind_actually_alive = False
-        except Exception as e:
-            logger.warning(f"[智选] Wind 探针异常: {e}")
-            wind_actually_alive = False
-
+    wind_actually_alive = False  # Wind 已移除, 保留变量以兼容下游逻辑
     scores = None
-    if wind_actually_alive:
-        logger.info("[智选] Wind 状态健康, 开始抓取宏观数据...")
-        macro_data = fetch_macro_factors()
-        val_data = fetch_valuation_factors()
-        risk_data = fetch_risk_momentum_factors()
+
+    try:
+        from services.markov_engine import get_current_macro_regime_live
+        hmm_result = get_current_macro_regime_live()
+        z = hmm_result.get("latest_zscores", {})
+        import math
+        pmi_score = math.tanh(z.get("PMI", 0) / 2.0)
+        m2_score = math.tanh(z.get("M2_Growth", 0) / 2.0)
+        cpi_score = math.tanh(z.get("CPI_YoY", 0) / 2.0)
+        credit_score = math.tanh(z.get("Credit_Impulse", 0) / 2.0)
         
-        # 二次检查: 确保不是被抛出的一堆兜底 0.0
-        if macro_data and isinstance(macro_data, dict):
-            if any(abs(v) > 0.0001 for v in macro_data.values() if isinstance(v, (int, float))):
-                derived = calculate_derived_factors(macro_data, val_data)
-                scores = calculate_factor_scores(macro_data, val_data, risk_data, derived)
-            else:
-                wind_actually_alive = False
-                logger.warning("[智选] Wind 探针通过, 但宏观数据抓取全部为 0.0, 判定失效.")
-        else:
-            wind_actually_alive = False
-            
-    is_wind_alive = bool(wind_actually_alive and scores and scores.get("composite_score") is not None)
-    
-    if is_wind_alive:
-        hmm_result = get_current_macro_regime_mock() # 默认
-        _composite = scores.get("composite_score", 0.5)
-        _macro_t = scores.get("macro_total", 0)
-        _val_t = scores.get("valuation_total", 0)
-    else:
-        logger.info("[智选] Wind 不可用，触发 Tushare Markov Engine 真实兜底...")
-        try:
-            from services.markov_engine import get_current_macro_regime_live
-            hmm_result = get_current_macro_regime_live()
-            z = hmm_result.get("latest_zscores", {})
-            import math
-            pmi_score = math.tanh(z.get("PMI", 0) / 2.0)
-            m2_score = math.tanh(z.get("M2_Growth", 0) / 2.0)
-            cpi_score = math.tanh(z.get("CPI_YoY", 0) / 2.0)
-            credit_score = math.tanh(z.get("Credit_Impulse", 0) / 2.0)
-            
-            _macro_t = (pmi_score + m2_score + credit_score) / 3.0
-            _val_t = -cpi_score / 2.0
-            risk_tot = (pmi_score - cpi_score) / 2.0
-            _composite = (_macro_t + _val_t + risk_tot) / 3.0
-            
-            # Map HMM regime to market_state string
-            reg_map = {"recovery": "Recovery", "overheat": "Overheat", "stagflation": "Stagflation", "deflation": "Deflation"}
-            _m_state = reg_map.get(hmm_result.get("current_regime", "deflation"), "Deflation")
-            
-            scores = {
-                "composite_score": _composite, 
-                "macro_total": _macro_t, 
-                "valuation_total": _val_t,
-                "risk_total": risk_tot,
-                "market_state": _m_state
-            }
-            logger.info(f"[智选] 成功使用 Tushare 生成替代宏观因子 {_composite:.3f}")
-        except Exception as e:
-            import traceback
-            logger.warning(f"[智选] Tushare 兜底失败: {e}\n{traceback.format_exc()}")
-            hmm_result = get_current_macro_regime_mock()
-            scores = {"composite_score": 0.5, "macro_total": 0.4, "valuation_total": 0.3, "risk_total": 0.3, "market_state": "Recovery"}
-            _composite, _macro_t, _val_t = 0.5, 0.4, 0.3
+        _macro_t = (pmi_score + m2_score + credit_score) / 3.0
+        _val_t = -cpi_score / 2.0
+        risk_tot = (pmi_score - cpi_score) / 2.0
+        _composite = (_macro_t + _val_t + risk_tot) / 3.0
+        
+        reg_map = {"recovery": "Recovery", "overheat": "Overheat", "stagflation": "Stagflation", "deflation": "Deflation"}
+        _m_state = reg_map.get(hmm_result.get("current_regime", "deflation"), "Deflation")
+        
+        scores = {
+            "composite_score": _composite, 
+            "macro_total": _macro_t, 
+            "valuation_total": _val_t,
+            "risk_total": risk_tot,
+            "market_state": _m_state
+        }
+        logger.info(f"[智选] Tushare Markov Engine 宏观因子: composite={_composite:.3f}")
+    except Exception as e:
+        import traceback
+        logger.warning(f"[智选] Tushare Markov Engine 异常, 使用 mock: {e}\n{traceback.format_exc()}")
+        hmm_result = get_current_macro_regime_mock()
+        scores = {"composite_score": 0.1, "macro_total": 0.2, "valuation_total": 0.1, "risk_total": 0.1, "market_state": "Recovery"}
+        _composite, _macro_t, _val_t = 0.1, 0.2, 0.1
 
     # ── Step 2: 宏观象限定位 ──
     factor_scores_6 = {
-        "经济增长": round(float(_macro_t * 2), 3),
+        "经济增长": round(float(_macro_t * 1.5), 3),
         "通胀商品": round(float(-_val_t * 1.5), 3),
         "利率环境": round(float(_macro_t * 1.2), 3),
-        "信用扩张": round(float((_composite - 0.5) * 2), 3),
+        "信用扩张": round(float(_composite * 1.5), 3),
         "海外环境": 0.0,
-        "市场情绪": round(float((_composite - 0.5) * 3), 3),
+        "市场情绪": round(float(_composite * 2.0), 3),
     }
 
     current_q = determine_quadrant(factor_scores_6)
     
     # 强行对齐 HMM 的象限状态，增强一致性
     quad_map = {"recovery": "recovery", "overheat": "overheat", "stagflation": "stagflation", "deflation": "deflation"}
-    if not is_wind_alive and hmm_result.get("current_regime"):
+    # 始终使用 HMM 象限状态 (Wind 已移除)
+    if hmm_result.get("current_regime"):
         current_q = quad_map.get(hmm_result["current_regime"], current_q)
 
     q_info = QUADRANT_DEFINITIONS[current_q]
@@ -404,45 +354,22 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         )
         scenarios.append(scenario)
 
-    # ==== [WIND DATA INJECTION] ====
+    # ==== [基金资料获取 — Tushare] ====
     wind_service = _import_backend_service("wind_profiles")
     all_codes = set()
     for sc in scenarios:
         for alloc in sc["allocations"]:
             all_codes.add(alloc["code"])
             
-    if wind_actually_alive:
-        wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
-    else:
-        _pm = _import_backend_service("product_mapping")
-        TRUST_PRODUCT_MAPPING = _pm.TRUST_PRODUCT_MAPPING
-        
-        def _get_fallback_profile(code, mapping):
-            clean = code.split(".")[0]
-            fname = "暂无"
-            fscale = "暂无"
-            for ac, products in mapping.items():
-                for item in products.get("公募基金", []):
-                    if item[0].split(".")[0] == clean:
-                        fname = item[1]
-                        fscale = f"{float(item[2]):.2f}" if len(item) > 2 else "暂无"
-                        break
-            return {
-                "code": code, "name": fname, "mgrname": "暂无", "setupdate": "暂无",
-                "scale": fscale, "navytd": "暂无", "nav1y": "暂无", "nav3y": "暂无",
-                "volatility": "暂无", "maxdrawdown": "暂无", "sharpe": "暂无"
-            }
-        wind_data = {}
-        for cd in all_codes:
-            wind_data[cd] = _get_fallback_profile(cd, TRUST_PRODUCT_MAPPING)
+    wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
     
     # 将基金档案附到每个方案，并用真实 NAV 数据覆盖 KPI
     period_map = {"半年": 1, "1年": 1, "3年": 3}
     period_years = period_map.get(period, 1)
 
-    # ── 提前批量拉取跨方案所有去重代码的 Tushare NAV，避免在多次测算中由于 0.12s 的频率限制导致 120s 超时 ──
+    # ── 提前批量拉取跨方案所有去重代码的 Tushare NAV ──
     cached_df_nav = None
-    if not wind_actually_alive and all_codes:
+    if all_codes:
         try:
             from datetime import timedelta
             import importlib.util, os as _os
@@ -695,24 +622,52 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
         except Exception as e:
             logger.warning(f"[智选] 协方差缓存读取失败: {e}")
 
-    # 3. 从 Wind 构建 (缓存过期或不存在时)
+    # 3. 从 Tushare 构建 (缓存过期或不存在时)
     try:
-        from WindPy import w
-        if not w.isconnected():
-            w.start()
+        import importlib.util, os as _os
+        _tushare_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "..", "scripts", "tushare_fetcher.py"
+        )
+        _tushare_path = _os.path.normpath(_tushare_path)
+        if not _os.path.exists(_tushare_path):
+            _tushare_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                "scripts", "tushare_fetcher.py"
+            )
+            _tushare_path = _os.path.normpath(_tushare_path)
+        _spec = importlib.util.spec_from_file_location("tushare_fetcher_cov", _tushare_path)
+        _ts_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_ts_mod)
 
         from datetime import timedelta
         end_date = datetime.now().strftime("%Y-%m-%d")
         start_date = (datetime.now() - timedelta(days=365 + 30)).strftime("%Y-%m-%d")
-        res = w.wsd(','.join(fund_codes), "nav_adj", start_date, end_date, "")
-        if res.ErrorCode != 0:
-            logger.error(f"[智选] Wind 拉取 NAV 失败: ErrorCode {res.ErrorCode}")
+        logger.info(f"[智选] 协方差矩阵: Tushare 拉取 {len(fund_codes)} 只基金 NAV...")
+        df_nav = _ts_mod.fetch_fund_nav(fund_codes, start_date, end_date)
+
+        if df_nav is None or df_nav.empty:
+            logger.warning("[智选] Tushare NAV 为空，尝试 Wind 增强...")
+            # Wind 可选增强
+            try:
+                from WindPy import w
+                if w.isconnected():
+                    res = w.wsd(','.join(fund_codes), "nav_adj", start_date, end_date, "")
+                    if res.ErrorCode == 0:
+                        if len(fund_codes) == 1:
+                            df_nav = pd.DataFrame({fund_codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
+                        else:
+                            df_nav = pd.DataFrame(dict(zip(fund_codes, res.Data)), index=pd.to_datetime(res.Times))
+                        logger.info(f"[智选] Wind 增强协方差 NAV: {len(df_nav.columns)} 列")
+            except (ImportError, Exception) as we:
+                logger.info(f"[智选] Wind 增强不可用: {we}")
+
+        if df_nav is None or df_nav.empty:
+            if _cov_cache["matrix"] is not None:
+                logger.info(f"[智选] 降级使用过期缓存 (构建于 {_cov_cache['built_at']})")
+                return _cov_cache
             return {"matrix": None, "codes": [], "built_at": None}
 
-        if len(fund_codes) == 1:
-            df_nav = pd.DataFrame({fund_codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-        else:
-            df_nav = pd.DataFrame(dict(zip(fund_codes, res.Data)), index=pd.to_datetime(res.Times))
         df_nav.dropna(how='all', inplace=True)
         df_nav.ffill(inplace=True)
 
@@ -721,6 +676,8 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
         df_returns.dropna(how='any', inplace=True)
 
         if len(df_returns) < 30:
+            if _cov_cache["matrix"] is not None:
+                return _cov_cache
             return {"matrix": None, "codes": [], "built_at": None}
 
         cov_matrix = df_returns.cov()
@@ -738,15 +695,9 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
             json.dump(cache_data, f, ensure_ascii=False)
 
         _cov_cache = {"matrix": cov_matrix, "codes": list(cov_matrix.columns), "built_at": built_at}
-        logger.info(f"[智选] 协方差矩阵已构建并缓存: {len(valid_codes)} 只基金, {len(df_returns)} 个数据点")
+        logger.info(f"[智选] 协方差矩阵已构建并缓存 (Tushare): {len(valid_codes)} 只基金, {len(df_returns)} 个数据点")
         return _cov_cache
 
-    except ImportError:
-        logger.warning("[智选] Wind 不可用, 协方差矩阵无法构建")
-        if _cov_cache["matrix"] is not None:
-            logger.info(f"[智选] Wind 不可用，降级使用过期缓存 (构建于 {_cov_cache['built_at']})")
-            return _cov_cache
-        return {"matrix": None, "codes": [], "built_at": None}
     except Exception as e:
         logger.error(f"[智选] 协方差矩阵构建异常: {e}")
         if _cov_cache["matrix"] is not None:
@@ -923,25 +874,7 @@ def _prefetch_nav_for_kpi(fund_codes, period_years: float):
     end_date_str = current_date.strftime("%Y-%m-%d")
     codes = list(fund_codes)
 
-    # 尝试 Wind
-    try:
-        from WindPy import w
-        if w.isconnected():
-            res = w.wsd(','.join(codes), "nav_adj", start_date_str, end_date_str, "")
-            if res.ErrorCode == 0:
-                import pandas as pd
-                if len(codes) == 1:
-                    df = pd.DataFrame({codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-                else:
-                    df = pd.DataFrame(dict(zip(codes, res.Data)), index=pd.to_datetime(res.Times))
-                logger.info(f"[智选] NAV 预获取 (Wind): {len(df.columns)} 列, {len(df)} 行")
-                return df
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning(f"[智选] NAV 预获取 Wind 失败: {e}")
-
-    # Tushare 兜底
+    # Tushare 拉取
     try:
         import importlib.util, os as _os
         _tushare_path = _os.path.join(
@@ -1365,27 +1298,30 @@ _BACKTEST_CACHE_STALENESS_DAYS = 30
 
 def _get_index_annual_returns(index_code: str, years: list) -> dict:
     """
-    从 Wind API 获取指数逐年收益率。
-    优化: 仅请求每年年末收盘价 (而非全部日线), 数据量减少 99%。
+    获取指数逐年收益率 (Tushare)。
+    仅请求每年年末收盘价, 数据量减少 99%。
     返回: {"2021": 5.23, "2022": -15.1, ...}  (百分比)
     """
     try:
-        from WindPy import w
-        wind_available = w.isconnected()
-        if not wind_available:
-            w.start()
-            wind_available = w.isconnected()
-    except ImportError:
-        logger.warning("[智选回测] WindPy 不可用，将完全使用 Tushare")
-        wind_available = False
+        import importlib.util, os as _os
+        _tushare_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "..", "scripts", "tushare_fetcher.py"
+        )
+        _tushare_path = _os.path.normpath(_tushare_path)
+        if not _os.path.exists(_tushare_path):
+            _tushare_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                "scripts", "tushare_fetcher.py"
+            )
+            _tushare_path = _os.path.normpath(_tushare_path)
+        _spec = importlib.util.spec_from_file_location("tushare_fetcher_idx", _tushare_path)
+        _ts_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_ts_mod)
 
-    try:
-        # 只请求每年最后2-3个交易日的收盘价 (而非6年日线)
-        # 需要 min_year-1 年末的收盘价作为第一年的基准
         result = {}
         all_years = sorted(set([min(years) - 1] + list(years)))
 
-        # 单次 wsd 请求, 只取每年年末附近的少量数据点
         for yr in all_years:
             yr_start = f"{yr}-12-15"
             yr_end = f"{yr}-12-31"
@@ -1394,40 +1330,14 @@ def _get_index_annual_returns(index_code: str, years: list) -> dict:
                 yr_start = (datetime.now() - pd.Timedelta(days=15)).strftime("%Y-%m-%d")
 
             v_val = None
-            if wind_available:
-                res = w.wsd(index_code, "close", yr_start, yr_end, "")
-                if res.ErrorCode == 0 and res.Data and res.Data[0]:
-                    # 取最后一个有效值作为该年年末收盘价
-                    valid_vals = [v for v in res.Data[0] if v is not None and str(v) != 'nan']
-                    if valid_vals:
-                        v_val = valid_vals[-1]
-
-            if v_val is None:
-                try:
-                    import importlib.util, os as _os
-                    _tushare_path = _os.path.join(
-                        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                        "..", "scripts", "tushare_fetcher.py"
-                    )
-                    _tushare_path = _os.path.normpath(_tushare_path)
-                    if not _os.path.exists(_tushare_path):
-                        _tushare_path = _os.path.join(
-                            _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
-                            "scripts", "tushare_fetcher.py"
-                        )
-                        _tushare_path = _os.path.normpath(_tushare_path)
-                    logger.info(f"[智选回测] 启用 Tushare API 兜底指数 {index_code} ({yr_start}至{yr_end}), path={_tushare_path}")
-                    _spec = importlib.util.spec_from_file_location("tushare_fetcher_idx", _tushare_path)
-                    _ts_mod = importlib.util.module_from_spec(_spec)
-                    _spec.loader.exec_module(_ts_mod)
-                    df_bm = _ts_mod.fetch_index_daily({index_code: index_code}, yr_start, yr_end)
-                    if df_bm is not None and not df_bm.empty and index_code in df_bm.columns:
-                        ser = df_bm[index_code].dropna()
-                        if not ser.empty:
-                            v_val = ser.iloc[-1]
-                            logger.info(f"[智选回测] Tushare 兜底成功: {index_code} {yr} → {v_val}")
-                except Exception as e:
-                    logger.warning(f"[智选回测] Tushare 获取指数失败: {e}")
+            try:
+                df_bm = _ts_mod.fetch_index_daily({index_code: index_code}, yr_start, yr_end)
+                if df_bm is not None and not df_bm.empty and index_code in df_bm.columns:
+                    ser = df_bm[index_code].dropna()
+                    if not ser.empty:
+                        v_val = ser.iloc[-1]
+            except Exception as e:
+                logger.warning(f"[智选回测] Tushare 获取指数失败: {index_code} {yr}: {e}")
 
             if v_val is not None:
                 result[yr] = float(v_val)
@@ -1439,11 +1349,11 @@ def _get_index_annual_returns(index_code: str, years: list) -> dict:
                 ret = (result[yr] / result[yr - 1] - 1) * 100
                 annual_returns[str(yr)] = round(ret, 2)
 
-        logger.info(f"[智选回测] {index_code} 年度收益率获取成功: {len(annual_returns)} 年 (极简模式)")
+        logger.info(f"[智选回测] {index_code} 年度收益率: {len(annual_returns)} 年 (Tushare)")
         return annual_returns
 
     except Exception as e:
-        logger.warning(f"[智选回测] {index_code} Wind 查询异常: {e}")
+        logger.warning(f"[智选回测] {index_code} 指数收益率异常: {e}")
         return {}
 
 
@@ -1547,57 +1457,31 @@ def _backtest_sync(portfolios: dict, benchmarks: list) -> dict:
     
     df_nav = None
 
-    # ── 尝试 Wind ──
+    # ── Tushare 拉取 ──
     try:
-        from WindPy import w
-        if w.isconnected():
-            start_ts = start_date_str
-            end_ts = end_date_str
-            res = w.wsd(','.join(all_codes), "nav_adj", start_ts, end_ts, "")
-            if res.ErrorCode == 0 and res.Data:
-                import pandas as pd
-                if len(all_codes) == 1:
-                    df_wind = pd.DataFrame({all_codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-                else:
-                    df_wind = pd.DataFrame(dict(zip(all_codes, res.Data)), index=pd.to_datetime(res.Times))
-                # 检查是否都是 None
-                non_null_cols = [c for c in df_wind.columns if df_wind[c].notna().sum() > 10]
-                if non_null_cols:
-                    df_nav = df_wind[non_null_cols]
-                    logger.info(f"[智选回测] Wind NAV: {len(df_nav.columns)} 列, {len(df_nav)} 行")
-                else:
-                    logger.warning(f"[智选回测] Wind NAV 全为 None, 降级到 Tushare")
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning(f"[智选回测] Wind NAV 异常: {e}")
-
-    # ── Tushare 兜底 ──
-    if df_nav is None or df_nav.empty:
-        try:
-            import importlib.util, os as _os
+        import importlib.util, os as _os
+        _tushare_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "..", "scripts", "tushare_fetcher.py"
+        )
+        _tushare_path = _os.path.normpath(_tushare_path)
+        if not _os.path.exists(_tushare_path):
             _tushare_path = _os.path.join(
-                _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-                "..", "scripts", "tushare_fetcher.py"
+                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                "scripts", "tushare_fetcher.py"
             )
             _tushare_path = _os.path.normpath(_tushare_path)
-            if not _os.path.exists(_tushare_path):
-                _tushare_path = _os.path.join(
-                    _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
-                    "scripts", "tushare_fetcher.py"
-                )
-                _tushare_path = _os.path.normpath(_tushare_path)
-            logger.info(f"[智选回测] Tushare NAV: 路径={_tushare_path}, 存在={_os.path.exists(_tushare_path)}")
-            _spec = importlib.util.spec_from_file_location("tushare_fetcher_backtest", _tushare_path)
-            _ts_mod = importlib.util.module_from_spec(_spec)
-            _spec.loader.exec_module(_ts_mod)
-            df_nav = _ts_mod.fetch_fund_nav(all_codes, start_date_str, end_date_str)
-            if df_nav is not None and not df_nav.empty:
-                logger.info(f"[智选回测] Tushare NAV 成功: {len(df_nav.columns)} 列, {len(df_nav)} 行")
-            else:
-                logger.warning("[智选回测] Tushare NAV 返回空")
-        except Exception as e:
-            logger.warning(f"[智选回测] Tushare 兜底获取基金净值失败: {e}\n{traceback.format_exc()}")
+        logger.info(f"[智选回测] Tushare NAV: 路径={_tushare_path}, 存在={_os.path.exists(_tushare_path)}")
+        _spec = importlib.util.spec_from_file_location("tushare_fetcher_backtest", _tushare_path)
+        _ts_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_ts_mod)
+        df_nav = _ts_mod.fetch_fund_nav(all_codes, start_date_str, end_date_str)
+        if df_nav is not None and not df_nav.empty:
+            logger.info(f"[智选回测] Tushare NAV 成功: {len(df_nav.columns)} 列, {len(df_nav)} 行")
+        else:
+            logger.warning("[智选回测] Tushare NAV 返回空")
+    except Exception as e:
+        logger.warning(f"[智选回测] Tushare 获取基金净值失败: {e}\n{traceback.format_exc()}")
 
     for label, weights in portfolios.items():
         pret = {}

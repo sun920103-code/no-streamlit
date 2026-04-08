@@ -71,81 +71,74 @@ def load_fund_pool() -> dict:
 
 def fetch_nav_data(all_codes: list, years: int = 3) -> pd.DataFrame:
     """
-    从 Wind API 批量下载复权净值。
+    从 Tushare Pro 批量下载复权净值。
     返回 DataFrame: index=日期, columns=基金代码, values=nav_adj
     """
-    try:
-        from WindPy import w
-        if not w.isconnected():
-            w.start()
-    except ImportError:
-        raise RuntimeError("WindPy 未安装或无法加载")
-    
     end_date = datetime.now().strftime("%Y-%m-%d")
     start_date = (datetime.now() - timedelta(days=365 * years + 30)).strftime("%Y-%m-%d")
     
-    print(f"📡 从 Wind 下载 {len(all_codes)} 只基金的复权净值...")
+    print(f"📡 从 Tushare 下载 {len(all_codes)} 只基金的复权净值...")
     print(f"   区间: {start_date} → {end_date}")
     
-    # Wind API 单次最大支持约 50 只基金的 wsd, 分批下载
-    batch_size = 40
     all_nav = pd.DataFrame()
-    failed_codes = []
     
-    for i in range(0, len(all_codes), batch_size):
-        batch = all_codes[i:i + batch_size]
-        batch_str = ','.join(batch)
-        print(f"   批次 {i // batch_size + 1}: {len(batch)} 只 ({batch[0]} ~ {batch[-1]})")
+    try:
+        from tushare_fetcher import fetch_fund_nav
+        bare_to_orig = {c.split('.')[0].zfill(6): c for c in all_codes}
         
-        res = w.wsd(batch_str, "nav_adj", start_date, end_date, "")
-        if res.ErrorCode != 0:
-            print(f"   ❌ Wind API 错误: ErrorCode={res.ErrorCode}")
-            failed_codes.extend(batch)
-            continue
+        batch_size = 40
+        bare_codes = list(bare_to_orig.keys())
         
-        if len(batch) == 1:
-            df_batch = pd.DataFrame({batch[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-        else:
-            df_batch = pd.DataFrame(dict(zip(batch, res.Data)), index=pd.to_datetime(res.Times))
-        
-        if all_nav.empty:
-            all_nav = df_batch
-        else:
-            all_nav = all_nav.join(df_batch, how='outer')
+        for i in range(0, len(bare_codes), batch_size):
+            batch = bare_codes[i:i + batch_size]
+            orig_batch = [bare_to_orig[c] for c in batch]
+            print(f"   批次 {i // batch_size + 1}: {len(batch)} 只 ({orig_batch[0]} ~ {orig_batch[-1]})")
             
-    # ------ Tushare 兜底逻辑 ------
-    # 找出确实没有拿到数据的代码 (包括 ErrorCode != 0，或 wsd 返回了空数据的)
-    fetched_codes = set(all_nav.columns) if not all_nav.empty else set()
-    missing_codes = [c for c in all_codes if c not in fetched_codes or (c in fetched_codes and all_nav[c].notna().sum() < 20)]
-    missing_codes = list(set(missing_codes) | set(failed_codes))
-    
-    if missing_codes:
-        print(f"⚠️ Wind 缺失或失败 {len(missing_codes)} 只基金，启动 Tushare 兜底...")
-        try:
-            from tushare_fetcher import fetch_fund_nav
-            # Tushare fetch_fund_nav 接受 bare codes，返回也是 bare codes 为列名
-            bare_to_orig = {c.split('.')[0].zfill(6): c for c in missing_codes}
-            ts_nav = fetch_fund_nav(list(bare_to_orig.keys()), start_date, end_date)
-            
-            if not ts_nav.empty:
-                # 把 ts_nav 的列名还原为 original code
-                ts_nav.columns = [bare_to_orig.get(str(c).zfill(6), c) for c in ts_nav.columns]
-                
+            ts_nav = fetch_fund_nav(orig_batch, start_date, end_date)
+            if ts_nav is not None and not ts_nav.empty:
+                ts_nav.columns = [bare_to_orig.get(str(c).split(".")[0].zfill(6), c) for c in ts_nav.columns]
                 if all_nav.empty:
                     all_nav = ts_nav
                 else:
-                    for c in ts_nav.columns:
-                        if c in all_nav.columns:
-                            all_nav[c] = ts_nav[c].combine_first(all_nav[c])
+                    all_nav = all_nav.join(ts_nav, how='outer')
+        
+        print(f"✅ Tushare 数据下载完成: {len(all_nav)} 行, {len(all_nav.columns)} 只基金")
+    except ImportError:
+        print("❌ tushare_fetcher 未找到")
+    except Exception as e:
+        print(f"❌ Tushare 下载异常: {e}")
+
+    # ── Wind 可选增强: 补充 Tushare 缺失的基金 ──
+    fetched_codes = set(all_nav.columns) if not all_nav.empty else set()
+    missing_codes = [c for c in all_codes if c not in fetched_codes
+                     or (c in fetched_codes and all_nav[c].notna().sum() < 20)]
+    if missing_codes:
+        try:
+            from WindPy import w
+            if w.isconnected():
+                print(f"🔄 Wind 增强: 补充 {len(missing_codes)} 只 Tushare 缺失基金...")
+                for i in range(0, len(missing_codes), 40):
+                    batch = missing_codes[i:i + 40]
+                    res = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
+                    if res.ErrorCode == 0:
+                        if len(batch) == 1:
+                            df_w = pd.DataFrame({batch[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
                         else:
-                            all_nav = all_nav.join(ts_nav[[c]], how='outer')
-                print(f"✅ Tushare 兜底成功补齐 {len(ts_nav.columns)} 只基金数据")
+                            df_w = pd.DataFrame(dict(zip(batch, res.Data)), index=pd.to_datetime(res.Times))
+                        if all_nav.empty:
+                            all_nav = df_w
+                        else:
+                            for c in df_w.columns:
+                                if c in all_nav.columns:
+                                    all_nav[c] = df_w[c].combine_first(all_nav[c])
+                                else:
+                                    all_nav = all_nav.join(df_w[[c]], how='outer')
+                print(f"✅ Wind 增强完成")
         except ImportError:
-            print("❌ tushare_fetcher 未找到，跳过兜底")
+            pass
         except Exception as e:
-            print(f"❌ Tushare 兜底异常: {e}")
-    # ----------------------------
-    
+            print(f"⚠️ Wind 增强跳过: {e}")
+
     if not all_nav.empty:
         all_nav.sort_index(inplace=True)
         all_nav.ffill(inplace=True)

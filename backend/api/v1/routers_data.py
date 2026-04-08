@@ -164,7 +164,7 @@ def _get_wind_direct():
 async def get_market_quotes():
     """
     获取 7 大宽基指数实时行情 (5 分钟缓存)。
-    由于 WSD 历史额度容易耗尽 (-40522017)，改为使用 w.wsq 实时快照接口 (不耗历史额度)。
+    Tushare rt_idx_k 主路径 + Wind wsq 可选增强。
     """
     global _market_quotes_cache, _market_quotes_ts
 
@@ -173,83 +173,94 @@ async def get_market_quotes():
         return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
                 "updated_at": _market_quotes_ts.strftime("%H:%M:%S")}
 
-    w = _get_wind_direct()
-    if w is None:
-        if _market_quotes_cache:
-            return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
-                    "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S"),
-                    "warning": "Wind 未连接，使用缓存数据"}
-        return {"status": "error", "quotes": [], "message": "Wind API 未连接"}
+    codes_list = [idx["code"] for idx in MARKET_INDICES]
+    quotes = []
 
+    # ── Tushare 主路径: rt_idx_k ──
+    ts_success = False
     try:
-        codes_list = [idx["code"] for idx in MARKET_INDICES]
-        codes_str = ",".join(codes_list)
-        logger.info(f"📡 正在从 Wind 拉取市场行情 (wsq): {len(codes_list)} 个指数...")
+        import importlib
+        _scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts")
+        _spec = importlib.util.spec_from_file_location("tushare_fetcher", os.path.join(_scripts_dir, "tushare_fetcher.py"))
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
 
-        # wsq 接口不耗费 wsd 历史配额, 返回 [rt_last, rt_pct_chg]
-        data = w.wsq(codes_str, "rt_last,rt_pct_chg")
+        ts_results = _mod.fetch_realtime_index(codes_list)
+        # 将 Tushare 结果映射到 MARKET_INDICES 格式
+        ts_map = {r['code']: r for r in ts_results}
 
-        if data is None:
-            logger.warning("Wind wsq 返回 None (可能超时)")
-            if _market_quotes_cache:
-                return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
-                        "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S")}
-            return {"status": "error", "quotes": [], "message": "Wind wsq 超时"}
+        for idx in MARKET_INDICES:
+            ts_data = ts_map.get(idx["code"])
+            close_val = ts_data['close'] if ts_data and ts_data.get('close') is not None else None
+            pct_val = ts_data['pct_chg'] if ts_data and ts_data.get('pct_chg') is not None else None
+            quotes.append({
+                "code": idx["code"],
+                "name": idx["name"],
+                "en": idx["en"],
+                "close": close_val,
+                "pct_chg": pct_val,
+            })
 
-        quotes = []
-        if data.ErrorCode == 0 and data.Data:
-            logger.info(f"📡 Wind wsq 返回成功数据: rt_last={data.Data[0][:3]}...")
-
-            for j, idx in enumerate(MARKET_INDICES):
-                close_val = None
-                pct_val = None
-
-                try:
-                    # wsq 返回各列数据 (第0列为 rt_last, 第1列为 rt_pct_chg)
-                    val_last = data.Data[0][j] if j < len(data.Data[0]) else None
-                    val_pct = data.Data[1][j] if len(data.Data) > 1 and j < len(data.Data[1]) else None
-
-                    if val_last is not None and str(val_last) not in ('nan', 'None', ''):
-                        close_val = float(val_last)
-
-                    if val_pct is not None and str(val_pct) not in ('nan', 'None', ''):
-                        # Wind wsq rt_pct_chg 直接返回 百分比数值 (0.015表示涨幅 1.5%)
-                        # 而我们的 UI 期望直接展示 1.5，需要乘以 100
-                        pct_val = float(val_pct) * 100.0
-
-                except Exception as e:
-                    logger.warning(f"解析 {idx['code']} 行情异常: {e}")
-
-                quotes.append({
-                    "code": idx["code"],
-                    "name": idx["name"],
-                    "en": idx["en"],
-                    "close": round(close_val, 2) if close_val is not None else None,
-                    "pct_chg": round(pct_val, 2) if pct_val is not None else None,
-                })
-
-            _market_quotes_cache = quotes
-            _market_quotes_ts = now
-            n_valid = sum(1 for q in quotes if q["close"] is not None)
-            logger.info(f"✅ 市场行情更新: {n_valid}/{len(quotes)} 个指数有有效数据")
-            return {"status": "success", "quotes": quotes, "cached": False,
-                    "updated_at": now.strftime("%H:%M:%S")}
-        else:
-            logger.warning(f"Wind WSQ 市场行情失败: ErrorCode={data.ErrorCode}")
-            # 如果 wsq 因为配额或其他原因彻底死掉 (-40522017) 则明确提示 UI
-            msg = f"ErrorCode={data.ErrorCode}"
-            if data.ErrorCode == -40522017:
-                msg = "行情配额已耗尽(ErrorCode=-40522017)"
-
-            if _market_quotes_cache:
-                return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
-                        "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S"), "warning": msg}
-            return {"status": "error", "quotes": [], "message": msg}
-
+        n_valid = sum(1 for q in quotes if q["close"] is not None)
+        if n_valid > 0:
+            ts_success = True
+            logger.info(f"✅ Tushare rt_idx_k 实时行情: {n_valid}/{len(quotes)} 个指数")
     except Exception as e:
-        logger.error(f"市场行情获取异常: {e}")
-        return {"status": "error", "quotes": _market_quotes_cache or [],
-                "message": str(e)}
+        logger.warning(f"⚠️ Tushare rt_idx_k 异常: {e}")
+
+    # ── Wind 可选增强: 补充 Tushare 缺失的指数 (如 HSI.HI) ──
+    missing_indices = [i for i, q in enumerate(quotes) if q["close"] is None] if ts_success else list(range(len(MARKET_INDICES)))
+    if missing_indices:
+        w = _get_wind_direct()
+        if w is not None:
+            try:
+                if not ts_success:
+                    # Tushare 完全失败, Wind 全量获取
+                    codes_str = ",".join(codes_list)
+                    logger.info(f"🔄 Wind wsq 全量获取: {len(codes_list)} 个指数")
+                else:
+                    # 仅补充缺失的
+                    _missing_codes = [MARKET_INDICES[i]["code"] for i in missing_indices]
+                    codes_str = ",".join(_missing_codes)
+                    logger.info(f"🔄 Wind wsq 增强: {len(_missing_codes)} 个缺失指数")
+
+                data = w.wsq(codes_str, "rt_last,rt_pct_chg")
+                if data is not None and data.ErrorCode == 0 and data.Data:
+                    if not ts_success:
+                        # Wind 全量模式
+                        for j, idx in enumerate(MARKET_INDICES):
+                            val_last = data.Data[0][j] if j < len(data.Data[0]) else None
+                            val_pct = data.Data[1][j] if len(data.Data) > 1 and j < len(data.Data[1]) else None
+                            close_val = float(val_last) if val_last is not None and str(val_last) not in ('nan', 'None', '') else None
+                            pct_val = float(val_pct) * 100.0 if val_pct is not None and str(val_pct) not in ('nan', 'None', '') else None
+                            quotes[j]["close"] = round(close_val, 2) if close_val else None
+                            quotes[j]["pct_chg"] = round(pct_val, 2) if pct_val else None
+                    else:
+                        # 增强模式: 仅填充缺失
+                        for j_w, idx_i in enumerate(missing_indices):
+                            if j_w < len(data.Data[0]):
+                                val_last = data.Data[0][j_w]
+                                val_pct = data.Data[1][j_w] if len(data.Data) > 1 else None
+                                if val_last is not None and str(val_last) not in ('nan', 'None', ''):
+                                    quotes[idx_i]["close"] = round(float(val_last), 2)
+                                if val_pct is not None and str(val_pct) not in ('nan', 'None', ''):
+                                    quotes[idx_i]["pct_chg"] = round(float(val_pct) * 100.0, 2)
+                    logger.info("  ✅ Wind wsq 增强完成")
+            except Exception as e:
+                logger.warning(f"  ⚠️ Wind wsq 异常: {e}")
+
+    n_valid_final = sum(1 for q in quotes if q["close"] is not None)
+    if n_valid_final > 0:
+        _market_quotes_cache = quotes
+        _market_quotes_ts = now
+        return {"status": "success", "quotes": quotes, "cached": False,
+                "updated_at": now.strftime("%H:%M:%S")}
+    elif _market_quotes_cache:
+        return {"status": "success", "quotes": _market_quotes_cache, "cached": True,
+                "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S"),
+                "warning": "数据源暂不可用，使用缓存"}
+    else:
+        return {"status": "error", "quotes": [], "message": "Tushare 和 Wind 均无法获取实时行情"}
 
 class SyncClientPortfolioRequest(BaseModel):
     fund_codes: List[str]

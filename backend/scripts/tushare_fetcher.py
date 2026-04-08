@@ -95,38 +95,22 @@ def fetch_fund_nav(codes: list, start_date: str, end_date: str) -> pd.DataFrame:
         ts_code = _wind_code_to_ts_code(code)
         col_key = code  # 保留原始代码作为列名
         try:
-            if _is_etf_code(code):
-                # ── ETF: 使用 fund_daily 获取收盘价 ──
-                df = api.fund_daily(
-                    ts_code=ts_code,
-                    start_date=start_ts,
-                    end_date=end_ts,
-                    fields='trade_date,close'
-                )
-                if df is not None and not df.empty:
-                    df['trade_date'] = pd.to_datetime(df['trade_date'])
-                    df = df.sort_values('trade_date').drop_duplicates(subset='trade_date', keep='last')
-                    df = df.set_index('trade_date')
-                    all_dfs[col_key] = df['close'].astype(float)
-                    logging.info(f"  [Tushare] {ts_code} ETF 收盘价获取成功: {len(df)} 天")
-                else:
-                    logging.warning(f"  [Tushare] {ts_code} ETF 收盘价为空")
+            # 统一使用 fund_nav 获取复权净值 (支持 ETF 和 场外基金)
+            df = api.fund_nav(
+                ts_code=ts_code,
+                start_date=start_ts,
+                end_date=end_ts,
+                fields='nav_date,adj_nav'
+            )
+            if df is not None and not df.empty:
+                df['nav_date'] = pd.to_datetime(df['nav_date'])
+                df = df.sort_values('nav_date').drop_duplicates(subset='nav_date', keep='last')
+                df = df.set_index('nav_date')
+                all_dfs[col_key] = df['adj_nav'].astype(float)
+                logging.info(f"  [Tushare] {ts_code} 复权净值(adj_nav)获取成功: {len(df)} 天")
             else:
-                # ── 开放式基金: 使用 fund_nav 获取复权净值 ──
-                df = api.fund_nav(
-                    ts_code=ts_code,
-                    start_date=start_ts,
-                    end_date=end_ts,
-                    fields='ann_date,adj_nav'
-                )
-                if df is not None and not df.empty:
-                    df['ann_date'] = pd.to_datetime(df['ann_date'])
-                    df = df.sort_values('ann_date').drop_duplicates(subset='ann_date', keep='last')
-                    df = df.set_index('ann_date')
-                    all_dfs[col_key] = df['adj_nav'].astype(float)
-                    logging.info(f"  [Tushare] {ts_code} NAV 获取成功: {len(df)} 天")
-                else:
-                    logging.warning(f"  [Tushare] {ts_code} NAV 为空")
+                logging.warning(f"  [Tushare] {ts_code} NAV 为空")
+            
             time.sleep(0.12)  # Tushare 频率限制: 每分钟200次
         except Exception as e:
             logging.warning(f"  [Tushare] {code} NAV/价格 异常: {e}")
@@ -137,6 +121,7 @@ def fetch_fund_nav(codes: list, start_date: str, end_date: str) -> pd.DataFrame:
 
     result = pd.DataFrame(all_dfs)
     result.index = pd.to_datetime(result.index)
+    result = result[result.index.notna()]
     result = result.sort_index()
     return result
 
@@ -165,16 +150,36 @@ def fetch_fund_metadata(codes: list) -> pd.DataFrame:
             # fund_basic: 基金基本信息
             df = api.fund_basic(ts_code=ts_code,
                                 fields='ts_code,name,fund_type,management,manager,found_date')
+            
+            mgr_name = '暂无'
+            mgr_start = ''
+            
+            # 追加拉取 fund_manager 获取真实的经理变更日期
+            try:
+                mgr_df = api.fund_manager(ts_code=ts_code)
+                if mgr_df is not None and not mgr_df.empty:
+                    # 找到目前仍在任的经理(end_date 为 NaN 或空字符串)
+                    active_mgr = mgr_df[mgr_df['end_date'].isna() | (mgr_df['end_date'] == '')]
+                    if not active_mgr.empty:
+                        mgr_name = ",".join(active_mgr['name'].dropna().tolist())
+                        mgr_start = active_mgr['begin_date'].dropna().max()  # 取最近上任的一个人的时间
+                time.sleep(0.12)
+            except Exception as e:
+                pass
+
             if df is not None and not df.empty:
                 row = df.iloc[0]
+                if mgr_name == '暂无': mgr_name = row.get('manager', '')
+                if mgr_start == '': mgr_start = row.get('found_date', '')
+                
                 rows.append({
                     'code': bare,
                     'SEC_NAME': row.get('name', bare),
                     'FUND_TYPE': row.get('fund_type', ''),
                     'FUND_INVESTTYPE': row.get('fund_type', ''),  # Tushare fund_type ≈ Wind investtype
                     'FUND_CORP_FUNDMANAGEMENTCOMPANY': row.get('management', ''),
-                    'FUND_FUNDMANAGER': row.get('manager', ''),
-                    'FUND_FUNDMANAGER_STARTDATE': row.get('found_date', ''),
+                    'FUND_FUNDMANAGER': mgr_name,
+                    'FUND_FUNDMANAGER_STARTDATE': mgr_start,
                     'FUND_FUNDMANAGER_TOTALFUNDNO': '',
                 })
             else:
@@ -402,3 +407,198 @@ def fetch_macro_economic_indicators(limit: int = 150) -> pd.DataFrame:
     except Exception as e:
         logging.error(f"[Tushare] 拉取宏观指标异常: {e}")
         return pd.DataFrame()
+
+
+# ═══════════════════════════════════════════
+# 6. 基金重仓股穿透 (替代 w.wset fundholdings)
+# ═══════════════════════════════════════════
+
+def fetch_fund_portfolio(fund_codes: list, rpt_date: str = None) -> dict:
+    """
+    获取基金十大重仓股 (替代 Wind w.wset("fundholdings")).
+
+    :param fund_codes: 基金代码列表 (bare code 如 ['000979', '519702'])
+    :param rpt_date: 报告期 YYYYMMDD, 如 '20251231'. 为 None 时自动推算最新季末.
+    :return: {
+        'holdings_map':  {fund_code: [(stock_code, stock_name), ...]},
+        'holdings_ratio': {fund_code: {stock_code: ratio_pct}},
+        'report_date': 实际使用的报告期
+    }
+    """
+    api = _get_api()
+
+    # 自动推算最新报告期 (往前推 2 个季度确保披露)
+    if rpt_date is None:
+        today = datetime.today()
+        candidates = []
+        dt = today
+        for _ in range(4):
+            m = dt.month
+            q = (m - 1) // 3
+            if q == 0:
+                rd = f"{dt.year - 1}1231"
+            elif q == 1:
+                rd = f"{dt.year}0331"
+            elif q == 2:
+                rd = f"{dt.year}0630"
+            else:
+                rd = f"{dt.year}0930"
+            if rd not in candidates:
+                candidates.append(rd)
+            dt = datetime.strptime(rd, "%Y%m%d") - timedelta(days=1)
+    else:
+        candidates = [rpt_date]
+
+    holdings_map = {}
+    holdings_ratio = {}
+    actual_rpt_date = candidates[0] if candidates else ''
+
+    for code in fund_codes:
+        ts_code = _wind_code_to_ts_code(code)
+        bare = code.split('.')[0].zfill(6)
+        found = False
+
+        for rd in candidates:
+            if found:
+                break
+            try:
+                # fund_portfolio: 基金持仓明细
+                df = api.fund_portfolio(
+                    ts_code=ts_code,
+                    ann_date=rd,
+                    fields='ts_code,ann_date,end_date,symbol,mkv,stk_mkv_ratio'
+                )
+                # 如果 ann_date 匹配不到, 尝试 end_date 参数
+                if df is None or df.empty:
+                    df = api.fund_portfolio(
+                        ts_code=ts_code,
+                        end_date=rd,
+                        fields='ts_code,ann_date,end_date,symbol,mkv,stk_mkv_ratio'
+                    )
+
+                if df is not None and not df.empty:
+                    # ★ 关键: fund_portfolio 返回所有历史季度的持仓
+                    # 必须先过滤到最新一期 (end_date 最大值)
+                    if 'end_date' not in df.columns:
+                        # 请求时未包含 end_date，重新请求
+                        df = api.fund_portfolio(
+                            ts_code=ts_code,
+                            end_date=rd,
+                            fields='ts_code,ann_date,end_date,symbol,mkv,stk_mkv_ratio'
+                        )
+                    if df is not None and not df.empty and 'end_date' in df.columns:
+                        latest_period = df['end_date'].max()
+                        df = df[df['end_date'] == latest_period]
+
+                    # stk_mkv_ratio 和 mkv 转数字
+                    if 'mkv' in df.columns:
+                        df['mkv'] = pd.to_numeric(df['mkv'], errors='coerce')
+                    if 'stk_mkv_ratio' in df.columns:
+                        df['stk_mkv_ratio'] = pd.to_numeric(df['stk_mkv_ratio'], errors='coerce')
+
+                    # 按持仓市值降序, 取 top 10
+                    df = df.sort_values('mkv', ascending=False).head(10)
+
+                    stk_list = []
+                    ratio_dict = {}
+                    seen_codes = set()
+                    for _, row in df.iterrows():
+                        stk_symbol = str(row.get('symbol', '')).strip()
+                        if not stk_symbol:
+                            continue
+                        # Tushare symbol 已带后缀 (如 601899.SH), 直接使用
+                        stk_wind = stk_symbol
+
+                        # 去重
+                        if stk_wind in seen_codes:
+                            continue
+                        seen_codes.add(stk_wind)
+
+                        stk_list.append((stk_wind, ''))
+                        ratio = row.get('stk_mkv_ratio')
+                        if ratio is not None and str(ratio) != 'nan':
+                            try:
+                                # Tushare stk_mkv_ratio 已经是百分比 (10.36 = 10.36%)
+                                ratio_dict[stk_wind] = round(float(ratio), 2)
+                            except (ValueError, TypeError):
+                                pass
+
+                    if stk_list:
+                        holdings_map[bare] = stk_list
+                        holdings_ratio[bare] = ratio_dict
+                        actual_rpt_date = rd
+                        found = True
+                        logging.info(f"  [Tushare] {bare} 重仓股: {len(stk_list)} 只 (报告期={rd})")
+
+                time.sleep(0.25)  # fund_portfolio 频率限制较严
+            except Exception as e:
+                logging.warning(f"  [Tushare] {bare} 重仓穿透异常 (rd={rd}): {e}")
+                time.sleep(0.5)
+
+        if not found:
+            logging.warning(f"  [Tushare] {bare} 所有报告期均无重仓数据")
+
+    return {
+        'holdings_map': holdings_map,
+        'holdings_ratio': holdings_ratio,
+        'report_date': actual_rpt_date,
+    }
+
+
+# ═══════════════════════════════════════════
+# 7. 实时指数行情 (替代 w.wsq rt_last,rt_pct_chg)
+# ═══════════════════════════════════════════
+
+def fetch_realtime_index(index_codes: list) -> list:
+    """
+    获取指数实时行情 (替代 Wind w.wsq).
+    使用 Tushare rt_idx_k 接口。
+
+    :param index_codes: 指数代码列表 (Wind 格式如 ['000001.SH', '000300.SH'])
+    :return: [{'code': '000001.SH', 'close': 3200.5, 'pct_chg': 1.23, 'pre_close': 3161.6}, ...]
+    """
+    api = _get_api()
+    results = []
+
+    # 批量获取: rt_idx_k 支持逗号分隔多个代码
+    # 过滤掉非 A 股指数 (如 HSI.HI)
+    a_codes = [c for c in index_codes if c.endswith('.SH') or c.endswith('.SZ')]
+    hk_codes = [c for c in index_codes if c not in a_codes]
+
+    if a_codes:
+        try:
+            codes_str = ','.join(a_codes)
+            df = api.rt_idx_k(ts_code=codes_str, fields='ts_code,name,close,pre_close')
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    ts_code = str(row.get('ts_code', '')).strip()
+                    close = row.get('close')
+                    pre_close = row.get('pre_close')
+                    pct = None
+                    if close is not None and pre_close is not None and pre_close != 0:
+                        try:
+                            pct = round((float(close) / float(pre_close) - 1.0) * 100, 2)
+                        except (ValueError, TypeError, ZeroDivisionError):
+                            pass
+                    results.append({
+                        'code': ts_code,
+                        'close': round(float(close), 2) if close is not None else None,
+                        'pct_chg': pct,
+                        'pre_close': round(float(pre_close), 2) if pre_close is not None else None,
+                    })
+                logging.info(f"  [Tushare] rt_idx_k 实时行情: {len(results)} 个指数")
+        except Exception as e:
+            logging.warning(f"  [Tushare] rt_idx_k 异常: {e}")
+
+    # 港股指数暂用空占位
+    for hk in hk_codes:
+        results.append({
+            'code': hk,
+            'close': None,
+            'pct_chg': None,
+            'pre_close': None,
+        })
+
+    return results
+
+

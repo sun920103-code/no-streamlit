@@ -869,7 +869,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } from 'vue'
 import * as echarts from 'echarts'
 import api, { uploadHoldings, optimizeHrp, getRebalanceInstructions, extractNewsViews, extractReportViews, optimizeBl, getMacroQuadrant, optimizeMbl, optimizeFactorRp, generatedApi } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
@@ -941,13 +941,27 @@ function getTextAnchor(idx, total) {
   return 'end'                         // left side
 }
 
+// Track which EGARCH/PCA charts have been initialized to avoid duplicate init
+const egarchInitialized = reactive({})
+const pcaInitialized = reactive({})
+
 watch(rebalResult, async (val) => {
   if (!val) return
   await nextTick()
   // Allow DOM to mount
   await new Promise(r => setTimeout(r, 100))
   renderRebalCharts(val)
+  // Retry after a longer delay for refs that may not have been set yet
+  await new Promise(r => setTimeout(r, 500))
+  renderRebalCharts(val)
 }, { deep: true })
+
+// Use onUpdated to catch when Vue finishes rendering (after :ref callbacks fire)
+onUpdated(() => {
+  if (rebalResult.value) {
+    renderRebalCharts(rebalResult.value)
+  }
+})
 
 function renderRebalCharts(result) {
   // Radar charts are now SVG-based (no ECharts needed)
@@ -956,8 +970,11 @@ function renderRebalCharts(result) {
   if (result.egarch) {
     for (const [key, data] of Object.entries(result.egarch)) {
       if (data.bypassed) continue
+      if (egarchInitialized[key]) continue  // already rendered
       const el = egarchRefs[key]
       if (!el) continue
+      // Ensure the element has dimensions (is visible in DOM)
+      if (el.offsetWidth === 0 || el.offsetHeight === 0) continue
       const chart = echarts.init(el)
       chart.setOption({
         tooltip: { trigger: 'axis', formatter: params => {
@@ -977,6 +994,7 @@ function renderRebalCharts(result) {
           markLine: { data: [{ type: 'average', name: '均值' }], lineStyle: { color: '#EF4444', type: 'dashed' }, label: { formatter: p => '均值 ' + (p.value * 100).toFixed(2) + '%', fontSize: 10 } },
         }]
       })
+      egarchInitialized[key] = true
     }
   }
 
@@ -1021,6 +1039,9 @@ async function runRebalPipeline() {
   rebalRunning.value = true
   rebalLogs.value = []
   rebalResult.value = null
+  // Reset chart initialization tracking for new run
+  Object.keys(egarchInitialized).forEach(k => delete egarchInitialized[k])
+  Object.keys(pcaInitialized).forEach(k => delete pcaInitialized[k])
 
   const formData = new FormData()
   for (const f of rebalReports.value) {

@@ -79,20 +79,24 @@ def main():
     try:
         import pandas as pd
         from datetime import datetime, timedelta
-        from services.wind_fetcher import init_wind
 
         tushare_used = False
-        wind_available = True
+        wind_available = False
 
-        w = init_wind()
-        if w is None:
-            logging.warning("⚠️ Wind 不可用 (WindPy 未安装或终端未启动), 将使用 Tushare 全量兜底模式")
-            wind_available = False
+        # Wind 可选增强: 仅在已连接时使用, 不主动启动
+        w = None
+        try:
+            from services.wind_fetcher import init_wind
+            w = init_wind()
+            if w is not None:
+                wind_available = True
+                logging.info("✅ Wind 已连接, 将作为可选增强数据源")
+        except ImportError:
+            logging.info("ℹ️ WindPy 未安装, 纯 Tushare 模式")
+        except Exception:
+            pass
 
-        if wind_available:
-            logging.info(f"✅ Wind 已连接, 开始分批下载 {len(codes)} 只基金...")
-        else:
-            logging.info(f"🔄 Tushare 全量模式, 开始处理 {len(codes)} 只基金...")
+        logging.info(f"🔄 Tushare 主路径 + {'Wind 增强' if wind_available else '无 Wind'}, 开始处理 {len(codes)} 只基金...")
 
         end_date = datetime.today().strftime('%Y-%m-%d')
         start_date = '2020-01-01'
@@ -103,105 +107,71 @@ def main():
         _cleanup_old_sync_files(out_dir)
 
         # ══════════════════════════════════════════
-        # 1. 分批下载复权净值
+        # 1. 下载复权净值 (Tushare 主路径)
         # ══════════════════════════════════════════
         all_nav_dfs = []
         failed_codes = []
-        is_quota_exceeded = False
 
-        # Wind w.wsd 也需要 .OF 后缀, 否则返回全 NaN
+        logging.info("📡 Tushare 主路径: 下载复权净值...")
+        print("__TUSHARE_STARTED__", flush=True)
+        try:
+            from tushare_fetcher import fetch_fund_nav
+            bare_codes = [c.split('.')[0].zfill(6) for c in codes]
+            df_ts_nav = fetch_fund_nav(bare_codes, start_date, end_date)
+            if df_ts_nav is not None and not df_ts_nav.empty:
+                all_nav_dfs.append(df_ts_nav)
+                tushare_used = True
+                logging.info(f"  ✅ Tushare NAV: {len(df_ts_nav.columns)} 只基金, {len(df_ts_nav)} 天")
+            else:
+                logging.warning("  ⚠️ Tushare NAV 返回空")
+        except Exception as e_ts:
+            logging.warning(f"  ⚠️ Tushare NAV 异常: {e_ts}")
+
+        # ── Wind 可选增强: 补充 Tushare 缺失的基金 ──
         _wsd_codes = [c + '.OF' if '.' not in c else c for c in codes]
-        if not wind_available:
-            # 跳过 Wind NAV 下载, 直接走 Tushare 兜底
-            logging.info("  ⏩ Wind 不可用, 跳过 Wind NAV 下载")
-        for batch_i in range(0, len(_wsd_codes), BATCH_SIZE) if wind_available else []:
-            batch = _wsd_codes[batch_i:batch_i + BATCH_SIZE]
-            batch_label = f"[{batch_i+1}-{min(batch_i+BATCH_SIZE, len(_wsd_codes))}/{len(_wsd_codes)}]"
-            logging.info(f"⏳ {batch_label} 拉取净值: {','.join(batch)}")
-            try:
-                nav_data = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
-                if nav_data.ErrorCode != 0:
-                    logging.warning(f"  ⚠️ 批次 {batch_label} 净值失败: {nav_data.ErrorCode}")
-                    if nav_data.ErrorCode == -40522017:
-                        is_quota_exceeded = True
-                    failed_codes.extend(batch)
-                    continue
-                if len(batch) == 1:
-                    df_batch = pd.DataFrame({batch[0]: nav_data.Data[0]}, index=nav_data.Times)
-                else:
-                    df_batch = pd.DataFrame(nav_data.Data, index=nav_data.Codes, columns=nav_data.Times).T
-                df_batch.index = pd.to_datetime(df_batch.index)
-                # 去掉 .OF 后缀, 保持 bare code 与下游一致
-                df_batch.columns = [str(c).split('.')[0].zfill(6) for c in df_batch.columns]
-                all_nav_dfs.append(df_batch)
-                logging.info(f"  ✅ {batch_label} 净值完成: {len(df_batch)} 天")
-                time.sleep(0.3)
-            except Exception as e:
-                logging.warning(f"  ⚠️ 批次 {batch_label} 异常: {e}")
-                failed_codes.extend(batch)
-
-        # ── Wind NAV 失败 → Tushare 兜底 ──
-        if is_quota_exceeded or not all_nav_dfs:
-            logging.warning("⚠️ Wind NAV 下载失败或配额不足, 启用 Tushare 兜底...")
-            print("__TUSHARE_STARTED__", flush=True)
-            try:
-                from tushare_fetcher import fetch_fund_nav
-                bare_codes = [c.split('.')[0].zfill(6) for c in codes]
-                df_ts_nav = fetch_fund_nav(bare_codes, start_date, end_date)
-                if not df_ts_nav.empty:
-                    all_nav_dfs.append(df_ts_nav)
-                    logging.info(f"  ✅ Tushare NAV 兜底成功: {len(df_ts_nav.columns)} 只基金, {len(df_ts_nav)} 天")
-                    is_quota_exceeded = False  # 已被 Tushare 救回
-                    tushare_used = True
-                else:
-                    logging.warning("  ⚠️ Tushare NAV 也返回空")
-            except Exception as e_ts:
-                logging.warning(f"  ⚠️ Tushare NAV 兜底异常: {e_ts}")
-
-        if is_quota_exceeded:
-            raise RuntimeError("Wind 和 Tushare 均无法获取 NAV 数据。Wind 配额已超限 (ErrorCode: -40522017)，Tushare 也未能兜底。")
+        if wind_available:
+            fetched = set()
+            if all_nav_dfs:
+                for df_tmp in all_nav_dfs:
+                    fetched.update(df_tmp.columns)
+            missing_wsd = [(wsd_c, bare) for wsd_c, bare
+                           in zip(_wsd_codes, [c.split('.')[0].zfill(6) for c in codes])
+                           if bare not in fetched]
+            if missing_wsd:
+                logging.info(f"🔄 Wind 增强: 补充 {len(missing_wsd)} 只 Tushare 缺失基金 NAV...")
+                _ms_codes = [x[0] for x in missing_wsd]
+                for batch_i in range(0, len(_ms_codes), BATCH_SIZE):
+                    batch = _ms_codes[batch_i:batch_i + BATCH_SIZE]
+                    try:
+                        nav_data = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
+                        if nav_data.ErrorCode == 0:
+                            if len(batch) == 1:
+                                df_batch = pd.DataFrame({batch[0]: nav_data.Data[0]}, index=nav_data.Times)
+                            else:
+                                df_batch = pd.DataFrame(nav_data.Data, index=nav_data.Codes, columns=nav_data.Times).T
+                            df_batch.index = pd.to_datetime(df_batch.index)
+                            df_batch.columns = [str(c).split('.')[0].zfill(6) for c in df_batch.columns]
+                            all_nav_dfs.append(df_batch)
+                            logging.info(f"  ✅ Wind 增强 NAV: {len(df_batch.columns)} 只")
+                        time.sleep(0.3)
+                    except Exception as e:
+                        logging.warning(f"  ⚠️ Wind 增强 NAV 异常: {e}")
 
         if not all_nav_dfs:
-            raise RuntimeError("所有数据源均失败，无法获取任何净值数据")
+            raise RuntimeError("Tushare 和 Wind 均无法获取任何净值数据")
         df_nav = pd.concat(all_nav_dfs, axis=1)
-        # 去重: 如果 Wind 和 Tushare 都返回了同一只基金, 保留第一列
         df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
 
-        # ── 验证 Wind NAV 数据有效性 — 全 NaN 列视为 Wind 实际失败 ──
-        _nan_cols = [c for c in df_nav.columns if df_nav[c].dropna().empty]
-        if _nan_cols:
-            logging.warning(f"⚠️ Wind NAV 返回 {len(_nan_cols)}/{len(df_nav.columns)} 只基金全 NaN, 触发 Tushare 兜底...")
-            print("__TUSHARE_STARTED__", flush=True)
-            df_nav = df_nav.drop(columns=_nan_cols)
-            try:
-                from tushare_fetcher import fetch_fund_nav
-                df_ts_nav = fetch_fund_nav(_nan_cols, start_date, end_date)
-                if not df_ts_nav.empty:
-                    df_nav = pd.concat([df_nav, df_ts_nav], axis=1)
-                    df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
-                    tushare_used = True
-                    logging.info(f"  ✅ Tushare NAV NaN修复兜底成功: {len(df_ts_nav.columns)} 只基金, {len(df_ts_nav)} 天")
-                else:
-                    logging.warning("  ⚠️ Tushare NAV NaN修复兜底返回空")
-            except Exception as e_ts:
-                logging.warning(f"  ⚠️ Tushare NAV NaN修复兜底异常: {e_ts}")
-
-        # 最终校验: df_nav 还是空则报错
-        if df_nav.empty or df_nav.dropna(how='all', axis=1).empty:
-            raise RuntimeError("Wind 和 Tushare 均无法获取有效 NAV 数据 (所有列全 NaN)")
-        # 再次清理仍然全 NaN 的列
+        # 清理全 NaN 的列
         df_nav = df_nav.dropna(how='all', axis=1)
+        if df_nav.empty:
+            raise RuntimeError("所有数据源均无法获取有效 NAV 数据 (所有列全 NaN)")
         success_codes = list(df_nav.columns)
 
         # ══════════════════════════════════════════
-        # 2. 分批获取基金元数据 + 经理信息
         # ══════════════════════════════════════════
-        _FULL_FIELDS = ("sec_name,fund_type,fund_investtype,fund_corp_fundmanagementcompany,"
-                        "fund_fundmanager,fund_fundmanager_startdate,"
-                        "fund_fundmanager_totalfundno")
-        _ESSENTIAL_FIELDS = "sec_name,fund_type,fund_investtype"
-
-        # Wind wss 要求基金代码带 .OF 后缀，否则返回全 NaN
+        # 2. 基金元数据 (Tushare 主路径)
+        # ══════════════════════════════════════════
         def _ensure_of_suffix(code):
             c = str(code).strip()
             if '.' not in c:
@@ -209,112 +179,71 @@ def main():
             return c
         _wss_codes = [_ensure_of_suffix(c) for c in success_codes]
 
-        all_meta_dfs = []
-        _meta_failed_codes = []
+        # ── Tushare 主路径 ──
+        df_meta = pd.DataFrame()
+        try:
+            from tushare_fetcher import fetch_fund_metadata
+            df_ts_meta = fetch_fund_metadata(success_codes)
+            if df_ts_meta is not None and not df_ts_meta.empty:
+                df_meta = df_ts_meta
+                tushare_used = True
+                logging.info(f"  ✅ Tushare 元数据: {len(df_meta)} 只基金")
+        except Exception as e_ts:
+            logging.warning(f"  ⚠️ Tushare 元数据异常: {e_ts}")
 
-        for batch_i in range(0, len(_wss_codes), BATCH_SIZE) if wind_available else []:
-            batch = _wss_codes[batch_i:batch_i + BATCH_SIZE]
-            batch_label = f"[meta {batch_i+1}-{min(batch_i+BATCH_SIZE, len(_wss_codes))}/{len(_wss_codes)}]"
-            _done = False
+        # ── Wind 可选增强: 补充完整字段 (经理信息/基金分类) ──
+        _FULL_FIELDS = ("sec_name,fund_type,fund_investtype,fund_corp_fundmanagementcompany,"
+                        "fund_fundmanager,fund_fundmanager_startdate,"
+                        "fund_fundmanager_totalfundno")
+        if wind_available:
+            # 识别 Tushare 缺失或名称为空的基金
+            _meta_missing = []
+            for c in success_codes:
+                if df_meta.empty or c not in df_meta.index:
+                    _meta_missing.append(c)
+                elif 'SEC_NAME' in df_meta.columns:
+                    name_val = df_meta.loc[c, 'SEC_NAME']
+                    if pd.isna(name_val) or str(name_val).strip() in ('', 'nan', 'None'):
+                        _meta_missing.append(c)
 
-            # 尝试 1: 完整字段
-            try:
-                logging.info(f"  ⏳ {batch_label} wss 完整字段: {','.join(batch)}")
-                meta_data = w.wss(','.join(batch), _FULL_FIELDS)
-                if meta_data.ErrorCode == 0:
-                    df_mb = pd.DataFrame(meta_data.Data, index=meta_data.Fields, columns=meta_data.Codes).T
-                    all_meta_dfs.append(df_mb)
-                    logging.info(f"  ✅ {batch_label} 完整元数据成功")
-                    _done = True
-                else:
-                    logging.warning(f"  ⚠️ {batch_label} 完整字段失败 ErrorCode={meta_data.ErrorCode}")
-                time.sleep(0.3)
-            except Exception as e:
-                logging.warning(f"  ⚠️ {batch_label} 完整字段异常: {e}")
-
-            # 尝试 2: 仅核心字段 (sec_name, fund_type, fund_investtype)
-            if not _done:
-                try:
-                    logging.info(f"  🔄 {batch_label} 降级为核心字段重试...")
-                    meta_data = w.wss(','.join(batch), _ESSENTIAL_FIELDS)
-                    if meta_data.ErrorCode == 0:
-                        df_mb = pd.DataFrame(meta_data.Data, index=meta_data.Fields, columns=meta_data.Codes).T
-                        all_meta_dfs.append(df_mb)
-                        logging.info(f"  ✅ {batch_label} 核心元数据成功")
-                        _done = True
-                    else:
-                        logging.warning(f"  ⚠️ {batch_label} 核心字段也失败 ErrorCode={meta_data.ErrorCode}")
-                    time.sleep(0.3)
-                except Exception as e:
-                    logging.warning(f"  ⚠️ {batch_label} 核心字段异常: {e}")
-
-            # 尝试 3: 逐只基金单独查询
-            if not _done:
-                for single_code in batch:
+            if _meta_missing:
+                logging.info(f"🔄 Wind 增强元数据: {len(_meta_missing)} 只基金...")
+                _missing_wss = [_ensure_of_suffix(c) for c in _meta_missing]
+                all_meta_dfs = []
+                for batch_i in range(0, len(_missing_wss), BATCH_SIZE):
+                    batch = _missing_wss[batch_i:batch_i + BATCH_SIZE]
                     try:
-                        logging.info(f"  🔄 单只查询: {single_code}")
-                        meta_data = w.wss(single_code, _ESSENTIAL_FIELDS)
+                        meta_data = w.wss(','.join(batch), _FULL_FIELDS)
                         if meta_data.ErrorCode == 0:
-                            df_mb = pd.DataFrame(meta_data.Data, index=meta_data.Fields, columns=[single_code]).T
+                            df_mb = pd.DataFrame(meta_data.Data, index=meta_data.Fields, columns=meta_data.Codes).T
                             all_meta_dfs.append(df_mb)
-                            logging.info(f"  ✅ {single_code} 单只元数据成功")
-                        else:
-                            logging.error(f"  ❌ {single_code} 单只也失败 ErrorCode={meta_data.ErrorCode}")
-                            _meta_failed_codes.append(single_code)
-                        time.sleep(0.2)
+                        time.sleep(0.3)
                     except Exception as e:
-                        logging.error(f"  ❌ {single_code} 单只异常: {e}")
-                        _meta_failed_codes.append(single_code)
+                        logging.warning(f"  ⚠️ Wind 增强元数据异常: {e}")
 
-        df_meta = pd.concat(all_meta_dfs) if all_meta_dfs else pd.DataFrame()
-        # 归一化元数据 index: 去掉 .OF 后缀, 补齐前导零到 6 位, 与 nav 列名对齐
+                if all_meta_dfs:
+                    df_wind_meta = pd.concat(all_meta_dfs)
+                    df_wind_meta.index = [str(c).split('.')[0].zfill(6) for c in df_wind_meta.index]
+                    df_wind_meta.columns = [str(col).upper() for col in df_wind_meta.columns]
+                    if df_meta.empty:
+                        df_meta = df_wind_meta
+                    else:
+                        for idx in df_wind_meta.index:
+                            if idx not in df_meta.index:
+                                df_meta = pd.concat([df_meta, df_wind_meta.loc[[idx]]])
+                            else:
+                                for col in df_wind_meta.columns:
+                                    existing = df_meta.loc[idx, col] if col in df_meta.columns else None
+                                    if existing is None or pd.isna(existing) or str(existing).strip() in ('', 'nan'):
+                                        if col not in df_meta.columns:
+                                            df_meta[col] = pd.NA
+                                        df_meta.loc[idx, col] = df_wind_meta.loc[idx, col]
+                    logging.info(f"  ✅ Wind 增强元数据完成: {len(df_wind_meta)} 只")
+
+        # 归一化
         if not df_meta.empty:
             df_meta.index = [str(c).split('.')[0].zfill(6) for c in df_meta.index]
             df_meta.columns = [str(col).upper() for col in df_meta.columns]
-            
-        if _meta_failed_codes:
-            logging.warning(f"⚠️ 以下基金元数据最终获取失败: {_meta_failed_codes}")
-
-        # ── Wind 元数据缺失 → Tushare 兜底 ──
-        _meta_missing = []
-        _meta_empty_name = []
-        if df_meta.empty:
-            _meta_missing = list(success_codes)
-        else:
-            for c in success_codes:
-                if c not in df_meta.index:
-                    _meta_missing.append(c)
-                else:
-                    # 如果Wind返回了数据，但SEC_NAME为空(NaN)，也需要Tushare兜底
-                    name_val = df_meta.loc[c, 'SEC_NAME'] if 'SEC_NAME' in df_meta.columns else None
-                    if pd.isna(name_val) or str(name_val).strip() in ('', 'nan', 'None'):
-                        _meta_empty_name.append(c)
-
-        _ts_target = _meta_missing + _meta_empty_name
-        
-        if _ts_target:
-            logging.info(f"🔄 Tushare 元数据兜底: {len(_ts_target)} 只基金 (缺失:{len(_meta_missing)}, 无名称:{len(_meta_empty_name)})...")
-            print("__TUSHARE_STARTED__", flush=True)
-            try:
-                from tushare_fetcher import fetch_fund_metadata
-                df_ts_meta = fetch_fund_metadata(_ts_target)
-                if not df_ts_meta.empty:
-                    if df_meta.empty:
-                        df_meta = df_ts_meta
-                    else:
-                        for idx in _meta_missing:
-                            if idx in df_ts_meta.index and idx not in df_meta.index:
-                                df_meta = pd.concat([df_meta, df_ts_meta.loc[[idx]]])
-                        for idx in _meta_empty_name:
-                            if idx in df_ts_meta.index:
-                                for col in df_ts_meta.columns:
-                                    if col not in df_meta.columns:
-                                        df_meta[col] = pd.NA
-                                    df_meta.loc[idx, col] = df_ts_meta.loc[idx, col]
-                    logging.info(f"  ✅ Tushare 元数据兜底完成")
-                    tushare_used = True
-            except Exception as e_ts:
-                logging.warning(f"  ⚠️ Tushare 元数据兜底异常: {e_ts}")
 
         # ══════════════════════════════════════════
         # 2.5 持仓综合分析表 — 全部直取 Wind API
@@ -633,7 +562,7 @@ def main():
 
 
         # ══════════════════════════════════════════
-        # 3. 穿透十大重仓 — 优先 w.wset, 回退 w.wss
+        # 3. 穿透十大重仓 (Tushare 主路径 + Wind 增强)
         # ══════════════════════════════════════════
         logging.info("🔬 穿透十大重仓...")
         # 自动推算最新报告期 (上季末)
@@ -657,10 +586,19 @@ def main():
         holdings_map = {}   # {fund_code: [(stock_code, stock_name), ...]}
         holdings_ratio = {}  # {fund_code: {stock_code: hold_ratio}}
 
-        # ── 方法 A: w.wset("fundholdings") — 多报告期级联, 一次性获取 top10 + 持仓占比 ──
-        # 参考 EnhancedFundDiagnosis: 按季度级联 (当期→上季末→再上季末), 
-        # 解决季报未披露时 w.wset 返回空数据的问题
-        _wset_success = False
+        # ── Tushare 主路径: fund_portfolio ──
+        try:
+            from tushare_fetcher import fetch_fund_portfolio
+            ts_portfolio = fetch_fund_portfolio(success_codes, rpt_date)
+            if ts_portfolio:
+                holdings_map.update(ts_portfolio.get('holdings_map', {}))
+                holdings_ratio.update(ts_portfolio.get('holdings_ratio', {}))
+                if ts_portfolio.get('report_date'):
+                    rpt_date = ts_portfolio['report_date']
+                logging.info(f"  ✅ Tushare 重仓穿透: {len(holdings_map)} 只基金有数据")
+                tushare_used = True
+        except Exception as e_ts:
+            logging.warning(f"  ⚠️ Tushare 重仓穿透异常: {e_ts}")
 
         # 构建报告期候选列表 (最新→递减)
         def _build_rpt_dates():
@@ -686,56 +624,57 @@ def main():
         _rpt_candidates = _build_rpt_dates()
         logging.info(f"  报告期候选: {_rpt_candidates}")
 
-        if wind_available:
-          for fund_code in success_codes:
-            if fund_code in holdings_map:
-                continue  # 已有数据, 跳过
-            _fc_wss = fund_code + '.OF' if '.' not in fund_code else fund_code
-            _found = False
+        # ── Wind 可选增强: 补充 Tushare 缺失的基金持仓 ──
+        _funds_missing_ts = [c for c in success_codes if c not in holdings_map]
+        if _funds_missing_ts and wind_available:
+            logging.info(f"🔄 Wind 增强: 补充 {len(_funds_missing_ts)} 只基金持仓穿透...")
+            for fund_code in _funds_missing_ts:
+                if fund_code in holdings_map:
+                    continue
+                _fc_wss = fund_code + '.OF' if '.' not in fund_code else fund_code
+                _found = False
 
-            try:
-                # 尝试每个候选报告期 (YYYYMMDD, YYYY-MM-DD) + "latest"
-                _all_params = []
-                for _rd in _rpt_candidates:
-                    _dash = f"{_rd[:4]}-{_rd[4:6]}-{_rd[6:]}"
-                    _all_params.append(
-                        f"fundcode={_fc_wss};rptdate={_rd};"
-                        f"field=wind_code,stock_name,proportion"
-                    )
-                    _all_params.append(
-                        f"fundcode={_fc_wss};rptdate={_dash};"
-                        f"field=wind_code,stock_name,proportion"
-                    )
+                try:
+                    _all_params = []
+                    for _rd in _rpt_candidates:
+                        _dash = f"{_rd[:4]}-{_rd[4:6]}-{_rd[6:]}"
+                        _all_params.append(
+                            f"fundcode={_fc_wss};rptdate={_rd};"
+                            f"field=wind_code,stock_name,proportion"
+                        )
+                        _all_params.append(
+                            f"fundcode={_fc_wss};rptdate={_dash};"
+                            f"field=wind_code,stock_name,proportion"
+                        )
 
-                for _param in _all_params:
-                    if _found:
-                        break
-                    res = w.wset("fundholdings", _param)
-                    if res.ErrorCode == 0 and res.Data and res.Data[0]:
-                        _codes = res.Data[0] if res.Data[0] else []
-                        _names = res.Data[1] if len(res.Data) > 1 else [None] * len(_codes)
-                        _ratios = res.Data[2] if len(res.Data) > 2 else [None] * len(_codes)
-                        for i in range(min(10, len(_codes))):
-                            stk_code = _codes[i]
-                            stk_name = _names[i] if i < len(_names) else None
-                            ratio = _ratios[i] if i < len(_ratios) else None
-                            if stk_code and str(stk_code).strip():
-                                _sc = str(stk_code).strip()
-                                _sn = str(stk_name or '').strip()
-                                holdings_map.setdefault(fund_code, []).append((_sc, _sn))
-                                if ratio is not None:
-                                    try:
-                                        holdings_ratio.setdefault(fund_code, {})[_sc] = float(ratio)
-                                    except (ValueError, TypeError):
-                                        pass
-                        if holdings_map.get(fund_code):
-                            _wset_success = True
-                            _found = True
-                            _used_rd = _param.split('rptdate=')[1].split(';')[0]
-                            logging.info(f"  ✅ w.wset {fund_code}: {len(holdings_map[fund_code])} 只重仓股 (报告期={_used_rd})")
-                time.sleep(0.15)
-            except Exception as e:
-                logging.warning(f"  ⚠️ w.wset {fund_code} 异常: {e}")
+                    for _param in _all_params:
+                        if _found:
+                            break
+                        res = w.wset("fundholdings", _param)
+                        if res.ErrorCode == 0 and res.Data and res.Data[0]:
+                            _codes = res.Data[0] if res.Data[0] else []
+                            _names = res.Data[1] if len(res.Data) > 1 else [None] * len(_codes)
+                            _ratios = res.Data[2] if len(res.Data) > 2 else [None] * len(_codes)
+                            for i in range(min(10, len(_codes))):
+                                stk_code = _codes[i]
+                                stk_name = _names[i] if i < len(_names) else None
+                                ratio = _ratios[i] if i < len(_ratios) else None
+                                if stk_code and str(stk_code).strip():
+                                    _sc = str(stk_code).strip()
+                                    _sn = str(stk_name or '').strip()
+                                    holdings_map.setdefault(fund_code, []).append((_sc, _sn))
+                                    if ratio is not None:
+                                        try:
+                                            holdings_ratio.setdefault(fund_code, {})[_sc] = float(ratio)
+                                        except (ValueError, TypeError):
+                                            pass
+                            if holdings_map.get(fund_code):
+                                _found = True
+                                _used_rd = _param.split('rptdate=')[1].split(';')[0]
+                                logging.info(f"  ✅ Wind w.wset {fund_code}: {len(holdings_map[fund_code])} 只重仓股 (报告期={_used_rd})")
+                    time.sleep(0.15)
+                except Exception as e:
+                    logging.warning(f"  ⚠️ Wind w.wset {fund_code} 异常: {e}")
 
         # ── 方法 A2: w.wsd(top10_stockwindcode) — 备用 API 端点 ──
         # 参考 MultiSourceFundDiagnosis: 不同的 Wind 字段, 可能在 w.wset 失败时可用
@@ -803,23 +742,40 @@ def main():
         logging.info(f"  📊 持仓穿透汇总: {_n_with_holdings}/{len(success_codes)} 只有重仓数据, {_n_without} 只无数据")
 
         # ══════════════════════════════════════════
-        # 4. 汇总底层资产 → 拉取过去 7 天涨跌幅 (w.wsd)
+        # 4. 汇总底层资产 → 拉取过去 7 天涨跌幅 (Tushare 主路径)
         # ══════════════════════════════════════════
         all_underlying = set()
         for fund_code, stk_list in holdings_map.items():
             for stk_code, _ in stk_list:
                 all_underlying.add(stk_code)
 
-        underlying_pct = {}  # {stock_code: {'name': ..., 'pct_chg': ..., 'max_drop_7d': ..., 'drop_date': ...}}
-        if all_underlying and wind_available:
-            logging.info(f"📊 拉取 {len(all_underlying)} 只底层资产行情...")
-            _und_list = list(all_underlying)
-            _7d_ago = (today - timedelta(days=10)).strftime('%Y%m%d')
-            _today_str = today.strftime('%Y%m%d')
+        underlying_pct = {}
+        _und_list = list(all_underlying)
+        _7d_ago = (today - timedelta(days=10)).strftime('%Y%m%d')
+        _today_str = today.strftime('%Y%m%d')
 
-            # ── Step 4a: w.wss 获取当日名称+涨跌幅 (可靠) ──
-            for batch_i in range(0, len(_und_list), BATCH_SIZE * 2):
-                batch = _und_list[batch_i:batch_i + BATCH_SIZE * 2]
+        # ── Tushare 主路径 ──
+        if all_underlying:
+            logging.info(f"📊 Tushare: 拉取 {len(all_underlying)} 只底层资产行情...")
+            try:
+                from tushare_fetcher import fetch_stock_pct_chg
+                ts_stock_result = fetch_stock_pct_chg(_und_list, _7d_ago, _today_str)
+                for stk, data in ts_stock_result.items():
+                    if data.get('pct_chg', 0.0) != 0.0 or data.get('daily_pcts'):
+                        underlying_pct[stk] = data
+                logging.info(f"  ✅ Tushare 底层行情: {len(underlying_pct)}/{len(_und_list)} 只")
+                tushare_used = True
+            except Exception as e_ts:
+                logging.warning(f"  ⚠️ Tushare 底层行情异常: {e_ts}")
+
+        # ── Wind 可选增强: 补充 Tushare 缺失的底层股票 ──
+        _stk_missing = [stk for stk in _und_list if stk not in underlying_pct]
+        if _stk_missing and wind_available:
+            logging.info(f"🔄 Wind 增强: 补充 {len(_stk_missing)} 只底层资产行情...")
+
+            # ── Wind wss 获取名称+涨跌幅 ──
+            for batch_i in range(0, len(_stk_missing), BATCH_SIZE * 2):
+                batch = _stk_missing[batch_i:batch_i + BATCH_SIZE * 2]
                 try:
                     res = w.wss(','.join(batch), "sec_name,pct_chg")
                     if res.ErrorCode == 0 and res.Data:
@@ -836,13 +792,11 @@ def main():
                             }
                     time.sleep(0.15)
                 except Exception as e:
-                    logging.warning(f"  底层行情 wss 异常: {e}")
+                    logging.warning(f"  Wind 底层行情 wss 异常: {e}")
 
-            logging.info(f"  ✅ wss 当日行情完成: {len(underlying_pct)} 只")
-
-            # ── Step 4b: w.wsd 补充 7 天逐日涨跌幅 (用于连续3日跌幅>10%检测) ──
+            # ── Wind wsd 补充 7 天逐日涨跌幅 ──
             _drop_count = 0
-            for stk in _und_list:
+            for stk in _stk_missing:
                 try:
                     r7 = w.wsd(stk, "pct_chg", _7d_ago, _today_str, "")
                     if r7.ErrorCode == 0 and r7.Data and r7.Data[0]:
@@ -852,35 +806,15 @@ def main():
                             _mi, _mv = min(_valid, key=lambda x: x[1])
                             if stk in underlying_pct:
                                 underlying_pct[stk]['max_drop_7d'] = _mv
-                                # 保存逐日涨跌幅数组 — 用于下游连续3日跌幅>10%检测
                                 underlying_pct[stk]['daily_pcts'] = [float(p) if p is not None and str(p) != 'nan' else None for p in _pcts]
                                 if hasattr(r7, 'Times') and r7.Times and _mi < len(r7.Times):
                                     _d = r7.Times[_mi]
                                     underlying_pct[stk]['drop_date'] = _d.strftime('%Y-%m-%d') if hasattr(_d, 'strftime') else str(_d)
                                 _drop_count += 1
                 except Exception:
-                    pass  # 7天数据非必须, 静默跳过
+                    pass
                 time.sleep(0.05)
-
-            logging.info(f"  ✅ wsd 7天最大跌幅完成: {_drop_count}/{len(_und_list)} 只")
-
-            # ── Step 4c: Tushare 兜底 — 对 Wind 未获取到的底层股票补充数据 ──
-            _stk_missing = [stk for stk in _und_list if stk not in underlying_pct or underlying_pct[stk].get('pct_chg', 0.0) == 0.0]
-            if _stk_missing:
-                logging.info(f"  🔄 Tushare 底层行情兜底: {len(_stk_missing)} 只...")
-                print("__TUSHARE_STARTED__", flush=True)
-                try:
-                    from tushare_fetcher import fetch_stock_pct_chg
-                    ts_result = fetch_stock_pct_chg(_stk_missing, _7d_ago, _today_str)
-                    _ts_filled = 0
-                    for stk, data in ts_result.items():
-                        if data.get('pct_chg', 0.0) != 0.0 or data.get('daily_pcts'):
-                            underlying_pct[stk] = data
-                            _ts_filled += 1
-                    logging.info(f"  ✅ Tushare 底层行情兜底: {_ts_filled}/{len(_stk_missing)} 只补充成功")
-                    tushare_used = True
-                except Exception as e_ts:
-                    logging.warning(f"  ⚠️ Tushare 底层行情兜底异常: {e_ts}")
+            logging.info(f"  ✅ Wind 增强底层行情完成: {_drop_count} 只")
 
         # ══════════════════════════════════════════
         # 5. 保存所有数据
@@ -904,19 +838,10 @@ def main():
             df_meta.to_csv(meta_path, encoding='utf-8-sig')
         else:
             logging.warning("⚠️ 元数据为空，client_nav_meta.csv 未生成")
-            if wind_available:
-                # Wind 可用但元数据为空 — 严重错误
-                _emit_result({
-                    "status": "error",
-                    "detail": "净值下载成功，但基金元数据 (fund_type/fund_investtype) 获取失败。"
-                              "请检查 Wind 终端是否正常，或手动在 Wind 中执行 wss 查询测试。",
-                })
-                sys.exit(1)
-            else:
-                logging.warning("  ↳ Tushare 模式下元数据缺失为预期行为，继续处理")
+            logging.warning("  ↳ 继续处理, 元数据缺失不阻塞流程")
 
         # ══════════════════════════════════════════
-        # 5. 自动下载 7 大比较基准指数行情 (与客户净值同时间段)
+        # 6. 自动下载 7 大比较基准指数行情 (Tushare 主路径)
         # ══════════════════════════════════════════
         BENCHMARK_CODES = {
             '000300.SH': '沪深300',
@@ -930,9 +855,26 @@ def main():
         bm_path = os.path.join(out_dir, 'client_benchmarks.csv')
         bm_success = False
 
-        if wind_available:
+        # ── Tushare 主路径 ──
+        try:
+            logging.info(f"📊 Tushare: 下载 {len(BENCHMARK_CODES)} 个比较基准指数行情...")
+            from tushare_fetcher import fetch_index_daily
+            df_bm_ts = fetch_index_daily(BENCHMARK_CODES, start_date, end_date)
+            if df_bm_ts is not None and not df_bm_ts.empty:
+                df_bm_ts.index.name = 'Date'
+                df_bm_ts.to_csv(bm_path, encoding='utf-8-sig')
+                logging.info(f"  ✅ Tushare 基准行情: {bm_path} ({len(df_bm_ts)} 行 × {len(df_bm_ts.columns)} 列)")
+                bm_success = True
+                tushare_used = True
+            else:
+                logging.warning("  ⚠️ Tushare 基准行情返回空")
+        except Exception as e_ts:
+            logging.warning(f"  ⚠️ Tushare 基准行情异常: {e_ts}")
+
+        # ── Wind 可选增强: 补充 Tushare 未获取到的基准 ──
+        if not bm_success and wind_available:
             try:
-                logging.info(f"📊 自动下载 {len(BENCHMARK_CODES)} 个比较基准指数行情...")
+                logging.info(f"🔄 Wind 增强: 补充基准指数行情...")
                 bm_codes_str = ','.join(BENCHMARK_CODES.keys())
                 bm_result = w.wsd(bm_codes_str, "close", start_date, end_date, "")
                 if bm_result.ErrorCode == 0:
@@ -944,34 +886,13 @@ def main():
                     df_bm.index = pd.to_datetime(df_bm.index)
                     df_bm.index.name = 'Date'
                     df_bm = df_bm.dropna(how='all')
-                    # 🚨 关键防御: 验证 Wind 返回的数据不是全 NaN 的空壳
                     _non_null_cols = [c for c in df_bm.columns if df_bm[c].notna().sum() > 10]
                     if len(df_bm) > 10 and len(_non_null_cols) > 0:
                         df_bm.to_csv(bm_path, encoding='utf-8-sig')
-                        logging.info(f"  ✅ 基准行情已保存: {bm_path} ({len(df_bm)} 行 × {len(df_bm.columns)} 列)")
+                        logging.info(f"  ✅ Wind 增强基准行情: {bm_path}")
                         bm_success = True
-                    else:
-                        logging.warning(f"  ⚠️ Wind 基准行情数据虽返回 ErrorCode=0 但实际数据为空 ({len(df_bm)} 行, {len(_non_null_cols)} 有效列), 降级 Tushare")
-                else:
-                    logging.warning(f"  ⚠️ 基准行情下载失败: ErrorCode={bm_result.ErrorCode}")
             except Exception as e_bm:
-                logging.warning(f"  ⚠️ 基准行情下载异常 (非致命): {e_bm}")
-        
-        if not bm_success:
-            # ── 启用 Tushare 兜底 ──
-            try:
-                logging.info(f"🔄 启动 Tushare 兜底获取比较基准指数行情...")
-                from tushare_fetcher import fetch_index_daily
-                df_bm_ts = fetch_index_daily(BENCHMARK_CODES, start_date, end_date)
-                if df_bm_ts is not None and not df_bm_ts.empty:
-                    df_bm_ts.index.name = 'Date'
-                    df_bm_ts.to_csv(bm_path, encoding='utf-8-sig')
-                    logging.info(f"  ✅ Tushare 基准行情已保存: {bm_path} ({len(df_bm_ts)} 行 × {len(df_bm_ts.columns)} 列)")
-                    tushare_used = True
-                else:
-                    logging.warning("  ⚠️ Tushare 基准行情返回为空")
-            except Exception as e_ts:
-                logging.warning(f"  ⚠️ Tushare 基准行情兜底异常: {e_ts}")
+                logging.warning(f"  ⚠️ Wind 增强基准异常: {e_bm}")
 
         # 保存穿透数据为 JSON
         xray_data = {
