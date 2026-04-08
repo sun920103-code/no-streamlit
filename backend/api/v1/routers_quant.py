@@ -427,7 +427,13 @@ async def calculate_kpis_endpoint(payload: KpiRequest):
         bm_path = os.path.join(data_dir, "client_benchmarks.csv")
         df_bm = None
         if os.path.exists(bm_path):
-            df_bm = pd.read_csv(bm_path, index_col=0, parse_dates=True)
+            _df_bm_raw = pd.read_csv(bm_path, index_col=0, parse_dates=True)
+            # 🚨 关键防御: 检查 CSV 是否只有表头没有数据行 (Wind 失败后的空壳文件)
+            if not _df_bm_raw.empty and len(_df_bm_raw) > 10:
+                df_bm = _df_bm_raw
+                logger.info(f"[KPI] client_benchmarks.csv 加载成功: {len(df_bm)} 行 × {len(df_bm.columns)} 列")
+            else:
+                logger.warning(f"[KPI] client_benchmarks.csv 数据为空或不足 ({len(_df_bm_raw)} 行), 将启用 Tushare 兜底")
             
         # ── 3. 对齐日期与拼接 ──
         df_all_ret = df_funds_ret.copy()
@@ -437,14 +443,67 @@ async def calculate_kpis_endpoint(payload: KpiRequest):
         if df_bm is not None:
             for bm_code in payload.benchmark_codes:
                 if bm_code in df_bm.columns:
-                    df_all_ret[bm_code] = df_bm[bm_code].pct_change().dropna()
-                    valid_benchmark_codes.append(bm_code)
+                    _bm_series = df_bm[bm_code].dropna()
+                    # 🚨 二次防御: 即使列存在, 也要检查实际有效数据点数量
+                    if len(_bm_series) > 10:
+                        df_all_ret[bm_code] = df_bm[bm_code].pct_change().dropna()
+                        valid_benchmark_codes.append(bm_code)
+                    else:
+                        logger.warning(f"[KPI] Benchmark {bm_code} 列存在但有效数据不足 ({len(_bm_series)} 行), 跳过")
                 else:
-                    logger.warning(f"Benchmark {bm_code} not found in client_benchmarks.csv")
+                    logger.warning(f"[KPI] Benchmark {bm_code} not found in client_benchmarks.csv")
         
-        # 如果一个基准都没找到，提供兜底
+        # ── 3b. Tushare 实时兜底: 如果本地 CSV 无有效基准, 在线拉取 ──
         if not valid_benchmark_codes:
-            logger.warning("未找到任何匹配的市场基准数据，使用代理数据...")
+            logger.warning("[KPI] 本地基准数据全部无效, 启动 Tushare 实时兜底...")
+            BM_NAME_MAP_REVERSE = {
+                '000300.SH': '沪深300', '000001.SH': '上证指数',
+                '399001.SZ': '深证成指', '399006.SZ': '创业板指',
+                '000905.SH': '中证500', '000852.SH': '中证1000',
+                'HSI.HI': '恒生指数',
+            }
+            try:
+                import importlib.util
+                _tushare_path = os.path.join(backend_dir, "scripts", "tushare_fetcher.py")
+                _tushare_path = os.path.normpath(_tushare_path)
+                if os.path.exists(_tushare_path):
+                    _spec = importlib.util.spec_from_file_location("tushare_fetcher_kpi", _tushare_path)
+                    _ts_mod = importlib.util.module_from_spec(_spec)
+                    _spec.loader.exec_module(_ts_mod)
+                    
+                    # 构建请求用的 code→name 映射
+                    _bm_req = {code: BM_NAME_MAP_REVERSE.get(code, code) for code in payload.benchmark_codes}
+                    _start = df_funds_ret.index.min().strftime("%Y-%m-%d") if not df_funds_ret.empty else "2020-01-01"
+                    _end = df_funds_ret.index.max().strftime("%Y-%m-%d") if not df_funds_ret.empty else pd.Timestamp.now().strftime("%Y-%m-%d")
+                    logger.info(f"[KPI] Tushare 兜底: 请求 {len(_bm_req)} 个指数, 区间 {_start} ~ {_end}")
+                    _df_bm_ts = _ts_mod.fetch_index_daily(_bm_req, _start, _end)
+                    if _df_bm_ts is not None and not _df_bm_ts.empty:
+                        logger.info(f"[KPI] Tushare 基准数据获取成功: {len(_df_bm_ts)} 行 × {len(_df_bm_ts.columns)} 列")
+                        # 同时回写 CSV 以便下次命中缓存
+                        try:
+                            _df_bm_ts.index.name = 'Date'
+                            _df_bm_ts.to_csv(bm_path, encoding='utf-8-sig')
+                            logger.info(f"[KPI] 已自动修复 client_benchmarks.csv ({len(_df_bm_ts)} 行)")
+                        except Exception as e_save:
+                            logger.warning(f"[KPI] 回写 CSV 失败 (非致命): {e_save}")
+                        
+                        for bm_code in payload.benchmark_codes:
+                            if bm_code in _df_bm_ts.columns:
+                                _bm_s = _df_bm_ts[bm_code].dropna()
+                                if len(_bm_s) > 10:
+                                    df_all_ret[bm_code] = _df_bm_ts[bm_code].pct_change().dropna()
+                                    valid_benchmark_codes.append(bm_code)
+                                    logger.info(f"[KPI] ✅ Tushare 兜底成功: {bm_code} ({len(_bm_s)} 天)")
+                    else:
+                        logger.warning("[KPI] Tushare 基准数据返回为空")
+                else:
+                    logger.warning(f"[KPI] tushare_fetcher.py 不存在: {_tushare_path}")
+            except Exception as e_ts:
+                logger.warning(f"[KPI] Tushare 基准兜底异常: {e_ts}")
+        
+        # ── 3c. 终极兜底: 如果 Tushare 也失败, 使用随机代理数据 ──
+        if not valid_benchmark_codes:
+            logger.warning("[KPI] Tushare 兜底也失败, 使用随机代理数据...")
             fallback_bm = payload.benchmark_codes[0] if payload.benchmark_codes else "000300.SH"
             np.random.seed(42)
             df_all_ret[fallback_bm] = pd.Series(np.random.normal(0.04/252, 0.15/np.sqrt(252), len(df_funds_ret)), index=df_funds_ret.index)

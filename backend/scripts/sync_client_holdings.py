@@ -166,6 +166,31 @@ def main():
         df_nav = pd.concat(all_nav_dfs, axis=1)
         # 去重: 如果 Wind 和 Tushare 都返回了同一只基金, 保留第一列
         df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
+
+        # ── 验证 Wind NAV 数据有效性 — 全 NaN 列视为 Wind 实际失败 ──
+        _nan_cols = [c for c in df_nav.columns if df_nav[c].dropna().empty]
+        if _nan_cols:
+            logging.warning(f"⚠️ Wind NAV 返回 {len(_nan_cols)}/{len(df_nav.columns)} 只基金全 NaN, 触发 Tushare 兜底...")
+            print("__TUSHARE_STARTED__", flush=True)
+            df_nav = df_nav.drop(columns=_nan_cols)
+            try:
+                from tushare_fetcher import fetch_fund_nav
+                df_ts_nav = fetch_fund_nav(_nan_cols, start_date, end_date)
+                if not df_ts_nav.empty:
+                    df_nav = pd.concat([df_nav, df_ts_nav], axis=1)
+                    df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
+                    tushare_used = True
+                    logging.info(f"  ✅ Tushare NAV NaN修复兜底成功: {len(df_ts_nav.columns)} 只基金, {len(df_ts_nav)} 天")
+                else:
+                    logging.warning("  ⚠️ Tushare NAV NaN修复兜底返回空")
+            except Exception as e_ts:
+                logging.warning(f"  ⚠️ Tushare NAV NaN修复兜底异常: {e_ts}")
+
+        # 最终校验: df_nav 还是空则报错
+        if df_nav.empty or df_nav.dropna(how='all', axis=1).empty:
+            raise RuntimeError("Wind 和 Tushare 均无法获取有效 NAV 数据 (所有列全 NaN)")
+        # 再次清理仍然全 NaN 的列
+        df_nav = df_nav.dropna(how='all', axis=1)
         success_codes = list(df_nav.columns)
 
         # ══════════════════════════════════════════
@@ -312,12 +337,14 @@ def main():
                 res = w.wss(','.join(_wss_codes), "return_y",
                             f"tradeDate={yr_end}")
                 if res.ErrorCode == 0 and res.Data and res.Data[0]:
+                    _n_valid_yr = 0
                     for j, code in enumerate(_wss_codes):
                         bare = str(code).split('.')[0].zfill(6)
                         val = res.Data[0][j] if j < len(res.Data[0]) else None
                         if val is not None and str(val) != 'nan':
                             _summary_data.setdefault(bare, {})[f"ret_{yr}"] = float(val) / 100.0
-                    logging.info(f"  ✅ {yr} 年度回报 WSS 完成")
+                            _n_valid_yr += 1
+                    logging.info(f"  ✅ {yr} 年度回报 WSS 完成 (有效值: {_n_valid_yr}/{len(_wss_codes)})")
                 else:
                     logging.warning(f"  ⚠️ {yr} return_y ErrorCode={res.ErrorCode}")
             except Exception as e:
@@ -452,7 +479,76 @@ def main():
         _got_ret = sum(1 for c, v in _summary_data.items() if any(k.startswith("ret_") for k in v))
         _got_vol = sum(1 for c, v in _summary_data.items() if 'vol_3y' in v)
         _got_mdd = sum(1 for c, v in _summary_data.items() if 'max_dd_3y' in v)
-        logging.info(f"  📊 综合分析表: {_got_ret} 只有收益数据, {_got_vol} 只有 vol, {_got_mdd} 只有 mdd")
+        logging.info(f"  📊 综合分析表 (Wind+本地): {_got_ret} 只有收益数据, {_got_vol} 只有 vol, {_got_mdd} 只有 mdd")
+
+        # ── 2.5-Final: 如果 Wind WSS + 本地 NAV 兜底后仍缺少数据, 强制重新用 df_nav 计算 ──
+        if _got_ret == 0 and not df_nav.empty:
+            logging.warning("⚠️ Wind WSS 返回全 NaN 且本地兜底未生效, 强制二次 NAV 计算...")
+            _df_force = df_nav.copy()
+            _df_force.index = pd.to_datetime(_df_force.index)
+            for code in _df_force.columns:
+                bare = str(code).split('.')[0].zfill(6)
+                s = _df_force[code].dropna()
+                if s.empty or len(s) < 20:
+                    logging.warning(f"  ⚠️ {bare} NAV 数据不足 ({len(s)} 天), 跳过")
+                    continue
+                s_dict = _summary_data.setdefault(bare, {})
+                s_last_dt = s.index[-1]
+                s_last_val = float(s.iloc[-1])
+
+                # YTD
+                try:
+                    s_prev_yr = s[s.index.year < s_last_dt.year]
+                    if not s_prev_yr.empty:
+                        s_dict['ret_ytd'] = (s_last_val / float(s_prev_yr.iloc[-1])) - 1.0
+                except Exception:
+                    pass
+
+                # 1Y
+                try:
+                    ago_1y = s_last_dt - timedelta(days=365)
+                    past_1y = s[:ago_1y.strftime('%Y-%m-%d')]
+                    if not past_1y.empty:
+                        s_dict['ret_1y'] = (s_last_val / float(past_1y.iloc[-1])) - 1.0
+                except Exception:
+                    pass
+
+                # 6M
+                try:
+                    ago_6m = s_last_dt - timedelta(days=182)
+                    past_6m = s[:ago_6m.strftime('%Y-%m-%d')]
+                    if not past_6m.empty:
+                        s_dict['ret_6m'] = (s_last_val / float(past_6m.iloc[-1])) - 1.0
+                except Exception:
+                    pass
+
+                # 年度 ret
+                for yr in _years:
+                    yr_key = f"ret_{yr}"
+                    if yr_key not in s_dict:
+                        try:
+                            s_yr = s[s.index.year == yr]
+                            s_prev = s[s.index.year < yr]
+                            if not s_yr.empty and not s_prev.empty:
+                                s_dict[yr_key] = (float(s_yr.iloc[-1]) / float(s_prev.iloc[-1])) - 1.0
+                        except Exception:
+                            pass
+
+                # Vol + MDD (三年)
+                try:
+                    dt_3y = s_last_dt - timedelta(days=1095)
+                    s_3y = s[dt_3y.strftime('%Y-%m-%d'):]
+                    if len(s_3y) > 60:
+                        if 'vol_3y' not in s_dict:
+                            s_dict['vol_3y'] = float(s_3y.pct_change().std() * (252**0.5))
+                        if 'max_dd_3y' not in s_dict:
+                            s_dict['max_dd_3y'] = float(abs((s_3y / s_3y.cummax() - 1.0).min()))
+                except Exception:
+                    pass
+
+            _got_ret2 = sum(1 for c, v in _summary_data.items() if any(k.startswith("ret_") for k in v))
+            _got_vol2 = sum(1 for c, v in _summary_data.items() if 'vol_3y' in v)
+            logging.info(f"  📊 强制二次计算后: {_got_ret2} 只有收益数据, {_got_vol2} 只有 vol")
 
         # ── 2.5b 排名 / 基准代码 ──
         _RATING_FIELDS = (
@@ -848,9 +944,14 @@ def main():
                     df_bm.index = pd.to_datetime(df_bm.index)
                     df_bm.index.name = 'Date'
                     df_bm = df_bm.dropna(how='all')
-                    df_bm.to_csv(bm_path, encoding='utf-8-sig')
-                    logging.info(f"  ✅ 基准行情已保存: {bm_path} ({len(df_bm)} 行 × {len(df_bm.columns)} 列)")
-                    bm_success = True
+                    # 🚨 关键防御: 验证 Wind 返回的数据不是全 NaN 的空壳
+                    _non_null_cols = [c for c in df_bm.columns if df_bm[c].notna().sum() > 10]
+                    if len(df_bm) > 10 and len(_non_null_cols) > 0:
+                        df_bm.to_csv(bm_path, encoding='utf-8-sig')
+                        logging.info(f"  ✅ 基准行情已保存: {bm_path} ({len(df_bm)} 行 × {len(df_bm.columns)} 列)")
+                        bm_success = True
+                    else:
+                        logging.warning(f"  ⚠️ Wind 基准行情数据虽返回 ErrorCode=0 但实际数据为空 ({len(df_bm)} 行, {len(_non_null_cols)} 有效列), 降级 Tushare")
                 else:
                     logging.warning(f"  ⚠️ 基准行情下载失败: ErrorCode={bm_result.ErrorCode}")
             except Exception as e_bm:

@@ -1404,14 +1404,28 @@ def _get_index_annual_returns(index_code: str, years: list) -> dict:
 
             if v_val is None:
                 try:
-                    import sys
-                    from scripts.tushare_fetcher import fetch_index_daily
-                    logger.info(f"[智选回测] 启用 Tushare API 兜底指数 {index_code} ({yr_start}至{yr_end})...")
-                    df_bm = fetch_index_daily({index_code: index_code}, yr_start, yr_end)
-                    if not df_bm.empty and index_code in df_bm.columns:
+                    import importlib.util, os as _os
+                    _tushare_path = _os.path.join(
+                        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+                        "..", "scripts", "tushare_fetcher.py"
+                    )
+                    _tushare_path = _os.path.normpath(_tushare_path)
+                    if not _os.path.exists(_tushare_path):
+                        _tushare_path = _os.path.join(
+                            _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                            "scripts", "tushare_fetcher.py"
+                        )
+                        _tushare_path = _os.path.normpath(_tushare_path)
+                    logger.info(f"[智选回测] 启用 Tushare API 兜底指数 {index_code} ({yr_start}至{yr_end}), path={_tushare_path}")
+                    _spec = importlib.util.spec_from_file_location("tushare_fetcher_idx", _tushare_path)
+                    _ts_mod = importlib.util.module_from_spec(_spec)
+                    _spec.loader.exec_module(_ts_mod)
+                    df_bm = _ts_mod.fetch_index_daily({index_code: index_code}, yr_start, yr_end)
+                    if df_bm is not None and not df_bm.empty and index_code in df_bm.columns:
                         ser = df_bm[index_code].dropna()
                         if not ser.empty:
                             v_val = ser.iloc[-1]
+                            logger.info(f"[智选回测] Tushare 兜底成功: {index_code} {yr} → {v_val}")
                 except Exception as e:
                     logger.warning(f"[智选回测] Tushare 获取指数失败: {e}")
 
