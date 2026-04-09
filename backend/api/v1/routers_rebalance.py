@@ -459,14 +459,14 @@ def _run_pipeline_sync(
         _q_desc_map = {
             "overheat": "经济扩张+通胀上行，偏向商品/短久期",
             "recovery": "经济扩张+通胀温和，利好权益/信用",
-            "stagflation": "经济收缩+通胀高企，防御为主",
-            "deflation": "经济收缩+通胀回落，利好债券/防御"
+            "stagflation": "经济放缓+通胀偏高，均衡防守为主",
+            "deflation": "经济放缓+通胀回落，利好债券/防御"
         }
         _q_label_cn = {
-            "overheat": "过热期",
+            "overheat": "景气高位期",
             "recovery": "复苏期",
-            "stagflation": "滞胀期",
-            "deflation": "衰退期"
+            "stagflation": "谨慎观望期",
+            "deflation": "等待复苏期"
         }.get(_q_label, "复苏期")
         
         step1_quadrant = {"quadrant": _q_label_cn, "label": _q_label_cn, "description": _q_desc_map.get(_q_label, "")}

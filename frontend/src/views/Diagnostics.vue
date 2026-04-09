@@ -245,8 +245,8 @@
                     </td>
                     <td style="text-align:right;color:#64748B;font-weight:500;">{{ (fundEnhanced[h.code]?.volatility || 0).toFixed(1) }}%</td>
                     <td style="text-align:center;">
-                      <span class="status-pill" :class="'status-' + (fundEnhanced[h.code]?.status || 'HOLDING').toLowerCase()">
-                        {{ fundEnhanced[h.code]?.status || 'HOLDING' }}
+                      <span class="status-pill" :class="statusCssClass(fundEnhanced[h.code]?.status)">
+                        {{ fundEnhanced[h.code]?.status || '持仓观察' }}
                       </span>
                     </td>
                     <td style="text-align:center;">
@@ -1479,6 +1479,23 @@ function formatNumber(n) {
   return Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
+const _STATUS_CSS_MAP = {
+  '领先': 'status-lingxian',
+  '活跃': 'status-huoyue',
+  '平稳': 'status-pingwen',
+  '高波动': 'status-gaobodong',
+  '持仓观察': 'status-chicangguancha',
+  // 向后兼容英文旧值
+  'OUTPERFORM': 'status-lingxian',
+  'ACTIVE': 'status-huoyue',
+  'STABLE': 'status-pingwen',
+  'VOLATILITY': 'status-gaobodong',
+  'HOLDING': 'status-chicangguancha',
+}
+function statusCssClass(status) {
+  return _STATUS_CSS_MAP[status] || 'status-chicangguancha'
+}
+
 async function processFile(file) {
   if (!file) return
   selectedFileName.value = file.name
@@ -1682,9 +1699,9 @@ function initQuadrantChart() {
       { type: 'rect', left: '50%', bottom: 40, shape: { width: 200, height: 140 }, style: { fill: 'rgba(254,226,226,0.3)' } },
       { type: 'rect', right: '50%', bottom: 40, shape: { width: 200, height: 140 }, style: { fill: 'rgba(219,234,254,0.3)' } },
       { type: 'text', left: '27%', top: 45, style: { text: '🌱 复苏', fill: '#059669', fontSize: 13, fontWeight: 'bold' } },
-      { type: 'text', left: '62%', top: 45, style: { text: '🔥 过热', fill: '#D97706', fontSize: 13, fontWeight: 'bold' } },
-      { type: 'text', left: '62%', bottom: 55, style: { text: '⚠️ 滞胀', fill: '#DC2626', fontSize: 13, fontWeight: 'bold' } },
-      { type: 'text', left: '27%', bottom: 55, style: { text: '❄️ 衰退', fill: '#2563EB', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '62%', top: 45, style: { text: '🔥 景气高位', fill: '#D97706', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '62%', bottom: 55, style: { text: '⚠️ 谨慎观望', fill: '#DC2626', fontSize: 13, fontWeight: 'bold' } },
+      { type: 'text', left: '27%', bottom: 55, style: { text: '❄️ 等待复苏', fill: '#2563EB', fontSize: 13, fontWeight: 'bold' } },
     ],
     series: [{
       type: 'scatter', symbolSize: 24, data: [[ix, gx]],
@@ -1745,28 +1762,27 @@ function initQuadrantChart() {
   font-weight: 700;
   padding: 3px 10px;
   border-radius: 9999px;
-  text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-.status-active {
-  background: #DCFCE7;
-  color: #16A34A;
-}
-.status-stable {
-  background: #D1FAE5;
-  color: #059669;
-}
-.status-holding {
-  background: #E5E7EB;
-  color: #6B7280;
-}
-.status-outperform {
+.status-lingxian {
   background: #BBF7D0;
   color: #15803D;
 }
-.status-volatility {
+.status-huoyue {
+  background: #DCFCE7;
+  color: #16A34A;
+}
+.status-pingwen {
+  background: #D1FAE5;
+  color: #059669;
+}
+.status-gaobodong {
   background: #FEE2E2;
   color: #DC2626;
+}
+.status-chicangguancha {
+  background: #E5E7EB;
+  color: #6B7280;
 }
 
 /* ═══ Legacy support ═══ */

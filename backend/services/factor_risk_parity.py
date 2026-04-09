@@ -213,32 +213,32 @@ def optimize_factor_risk_parity(
     defense_log = []
     
     if current_quadrant == "stagflation":
-        # 滞胀：大幅压降权益，提升现金和大宗
+        # 谨慎观望期：大幅压降权益，提升现金和大宗
         for asset in ["大盘核心", "科技成长", "海外QDII"]:
             old_w = weights[asset]
             weights[asset] = round(old_w * 0.3, 4)
-            defense_log.append(f"⚠️ 滞胀防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
+            defense_log.append(f"⚠️ 谨慎观望防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
         weights["黄金商品"] = round(weights["黄金商品"] * 2.0, 4)
         weights["短债理财"] = round(weights["短债理财"] * 2.0, 4)
-        defense_log.append("🛡️ 滞胀象限: 加配黄金与短债作为安全气囊")
+        defense_log.append("🛡️ 谨慎观望象限: 加配黄金与短债作为安全气囊")
         
     elif current_quadrant == "deflation":
-        # 衰退通缩：压降权益，拉满长债避险
+        # 等待复苏期：压降权益，拉满长债避险
         for asset in ["大盘核心", "科技成长", "海外QDII"]:
             old_w = weights[asset]
             weights[asset] = round(old_w * 0.4, 4)
-            defense_log.append(f"⚠️ 衰退防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
+            defense_log.append(f"⚠️ 等待复苏防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
         weights["纯债固收"] = round(weights["纯债固收"] * 1.8, 4)
-        defense_log.append("🛡️ 衰退象限: 加配长久期国债，央行降息利好债券")
+        defense_log.append("🛡️ 等待复苏象限: 加配长久期国债，央行降息利好债券")
         
     elif current_quadrant == "overheat":
-        # 过热：压降债券和成长股，加配大宗商品
+        # 景气高位期：压降债券和成长股，加配大宗商品
         for asset in ["纯债固收", "科技成长"]:
             old_w = weights[asset]
             weights[asset] = round(old_w * 0.5, 4)
-            defense_log.append(f"⚠️ 过热防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
+            defense_log.append(f"⚠️ 景气高位防御: {asset} 权重 {old_w:.2%} → {weights[asset]:.2%}")
         weights["黄金商品"] = round(weights["黄金商品"] * 2.0, 4)
-        defense_log.append("🔥 过热象限: 通胀上行利好大宗商品，债券承压")
+        defense_log.append("🔥 景气高位象限: 通胀上行利好大宗商品，债券承压")
     
     # ── Step 3: 重新归一化 ──
     total = sum(weights.values())

@@ -188,7 +188,7 @@ async function triggerReview() {
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8')
-    reviewStatus.value = '粤财信托，您的专业财富顾问，正在搜集全球市场资讯，为您生成过去一周市场回顾中...'
+    reviewStatus.value = '粤财信托，您的专业财富顾问，正在搜集全球市场资讯，为您生成过去一周市场回顾与前瞻配置建议中...'
 
     while (true) {
       const { value, done } = await reader.read()

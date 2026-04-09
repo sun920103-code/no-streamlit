@@ -81,8 +81,8 @@ QUADRANT_DEFINITIONS = {
         },
     },
     "overheat": {
-        "label": "过热期",
-        "description": "经济增长上升 + 通胀上升 (利好大宗商品，股债承压)",
+        "label": "景气高位期",
+        "description": "经济增长上升 + 通胀上升（利好大宗商品，关注估值风险）",
         "growth": "rising",
         "inflation": "rising",
         "best_assets": ["黄金商品"],
@@ -93,12 +93,12 @@ QUADRANT_DEFINITIONS = {
             "利率环境": 0.5,    # 加息预期打压利率敏感型
             "信用扩张": 0.7,
             "海外环境": 0.9,
-            "市场情绪": 0.6,    # 过热期情绪失灵
+            "市场情绪": 0.6,    # 景气高位期情绪失灵
         },
     },
     "stagflation": {
-        "label": "滞胀期",
-        "description": "经济增长下降 + 通胀上升 (最危险的象限，股债双杀)",
+        "label": "谨慎观望期",
+        "description": "经济增长放缓 + 通胀偏高（优选抗通胀资产，均衡防守）",
         "growth": "falling",
         "inflation": "rising",
         "best_assets": ["黄金商品", "短债理财"],
@@ -113,8 +113,8 @@ QUADRANT_DEFINITIONS = {
         },
     },
     "deflation": {
-        "label": "衰退通缩期",
-        "description": "经济增长下降 + 通胀下降 (利好国债避险，权益承压)",
+        "label": "等待复苏期",
+        "description": "经济增长放缓 + 通胀回落（利好债券配置，权益谨慎）",
         "growth": "falling",
         "inflation": "falling",
         "best_assets": ["纯债固收", "短债理财"],

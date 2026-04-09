@@ -544,12 +544,12 @@ def _build_scenario(name, base_weights, target_ret, max_vol, capital, fund_pool,
     # 动态最大回撤估算: 基于风险资产集中度 + 象限风险修正
     # 分散化组合: 乘数约 1.2x; 集中权益: 乘数约 2.0x
     dd_multiplier = 1.0 + risk_concentration * 1.2
-    # 象限风险修正: 滞肀1/衰退象限尾部风险更高
+    # 象限风险修正: 谨慎观望期/等待复苏期尾部风险更高
     QUADRANT_DD_MODIFIER = {
         "recovery": 0.90,    # 复苏期尾部风险较低
-        "overheat": 1.10,    # 过热期需警惕气泡
-        "stagflation": 1.20, # 滞肀1股债双杀风险最高
-        "deflation": 1.05,   # 衰退通缩债券还能护体
+        "overheat": 1.10,    # 景气高位期需警惕估值风险
+        "stagflation": 1.20, # 谨慎观望期风险最高
+        "deflation": 1.05,   # 等待复苏期债券还能护体
     }
     dd_multiplier *= QUADRANT_DD_MODIFIER.get(quadrant, 1.0)
     est_max_dd = -est_vol * dd_multiplier
