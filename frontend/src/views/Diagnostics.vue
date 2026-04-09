@@ -1480,13 +1480,13 @@ function formatNumber(n) {
 }
 
 const _STATUS_CSS_MAP = {
-  '领先': 'status-lingxian',
+  '绩优': 'status-jiyou',
   '活跃': 'status-huoyue',
   '平稳': 'status-pingwen',
   '高波动': 'status-gaobodong',
   '持仓观察': 'status-chicangguancha',
   // 向后兼容英文旧值
-  'OUTPERFORM': 'status-lingxian',
+  'OUTPERFORM': 'status-jiyou',
   'ACTIVE': 'status-huoyue',
   'STABLE': 'status-pingwen',
   'VOLATILITY': 'status-gaobodong',
@@ -1764,7 +1764,7 @@ function initQuadrantChart() {
   border-radius: 9999px;
   letter-spacing: 0.05em;
 }
-.status-lingxian {
+.status-jiyou {
   background: #BBF7D0;
   color: #15803D;
 }

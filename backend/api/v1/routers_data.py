@@ -374,7 +374,7 @@ def _compute_fund_summary(task_id: str, fund_codes: List[str]) -> Dict:
 
         # 状态 badge 逻辑
         if monthly_pl > 2:
-            status = "领先"
+            status = "绩优"
         elif monthly_pl > 0:
             status = "活跃"
         elif monthly_pl > -1:
