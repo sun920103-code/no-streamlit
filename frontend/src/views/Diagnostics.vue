@@ -1351,7 +1351,7 @@ function getStrategiesPayload() {
   
   return {
     strategies: strats,
-    benchmark_codes: ["000300.SH", "000001.SH", "399001.SZ", "399006.SZ", "000905.SH", "000852.SH", "HSI.HI"],
+    benchmark_codes: ["000300.SH", "000001.SH", "399001.SZ", "399006.SZ", "000905.SH", "000852.SH"],
     cov_matrix_2d: mockCov,
     asset_names: assetNames
   }
@@ -1415,7 +1415,7 @@ function _applyFallbackQuotes() {
     { code: '399006.SZ', name: '创业板指', en: 'ChiNext', close: null, pct_chg: null },
     { code: '000905.SH', name: '中证500', en: 'CSI 500', close: null, pct_chg: null },
     { code: '000852.SH', name: '中证1000', en: 'CSI 1000', close: null, pct_chg: null },
-    { code: 'HSI.HI',    name: '恒生指数', en: 'Hang Seng', close: null, pct_chg: null },
+
   ]
   marketUpdatedAt.value = '等待连接'
 }

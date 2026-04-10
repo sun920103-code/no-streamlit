@@ -704,20 +704,7 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
         df_nav = _ts_mod.fetch_fund_nav(fund_codes, start_date, end_date)
 
         if df_nav is None or df_nav.empty:
-            logger.warning("[智选] Tushare NAV 为空，尝试 Wind 增强...")
-            # Wind 可选增强
-            try:
-                from WindPy import w
-                if w.isconnected():
-                    res = w.wsd(','.join(fund_codes), "nav_adj", start_date, end_date, "")
-                    if res.ErrorCode == 0:
-                        if len(fund_codes) == 1:
-                            df_nav = pd.DataFrame({fund_codes[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-                        else:
-                            df_nav = pd.DataFrame(dict(zip(fund_codes, res.Data)), index=pd.to_datetime(res.Times))
-                        logger.info(f"[智选] Wind 增强协方差 NAV: {len(df_nav.columns)} 列")
-            except (ImportError, Exception) as we:
-                logger.info(f"[智选] Wind 增强不可用: {we}")
+            logger.warning("[智选] Tushare NAV 为空，跳过协方差矩阵构建")
 
         if df_nav is None or df_nav.empty:
             if _cov_cache["matrix"] is not None:

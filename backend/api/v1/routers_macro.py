@@ -34,15 +34,13 @@ async def fetch_edb_data():
             fetch_risk_momentum_factors, 
             calculate_derived_factors, 
             calculate_factor_scores,
-            _check_wind
         )
         
-        # [优化] 如果 Wind 彻底挂了，别再循环去测算浪费时间，直接使用 Tushare 兜底引擎！
-        is_wind_alive = await run_in_threadpool(_check_wind)
+        # [2026-04-10] Wind 已移除, 直接走 Tushare 主路径
         scores = None
 
-        if is_wind_alive:
-            # 1. 抓取三组基础数据
+        try:
+            # 1. 抓取三组基础数据 (Tushare)
             macro_data = await run_in_threadpool(fetch_macro_factors)
             val_data = await run_in_threadpool(fetch_valuation_factors)
             risk_data = await run_in_threadpool(fetch_risk_momentum_factors)
@@ -56,8 +54,10 @@ async def fetch_edb_data():
             # 如果得出所有都是 0，视为无效数据
             if isinstance(scores, dict) and scores.get("macro_total") == 0.0 and scores.get("valuation_total") == 0.0 and scores.get("risk_total") == 0.0:
                 scores = None
+        except Exception as e_ts:
+            logger.warning(f"[EDB] Tushare 因子管线异常: {e_ts}")
                 
-        # 4. 判断是否需要兜底 (Wind断线，或者分数全为 0)
+        # 4. 判断是否需要兜底 (因子管线失败或分数全为 0)
         if not scores:
             try:
                 from services.markov_engine import get_current_macro_regime_live
@@ -85,12 +85,12 @@ async def fetch_edb_data():
                     "macro_total": round(macro_tot, 3),
                     "valuation_total": round(val_tot, 3),
                     "risk_total": round(risk_tot, 3),
-                    "factor_analysis": {"details": "Wind API脱机，Tushare Engine 已横向接管底层宏观数据"}
+                    "factor_analysis": {"details": "Tushare 因子管线数据不足，Markov Z-Score 引擎已横向接管"}
                 }
-                logger.info(f"[EDB] Wind不可用，已成功调用Tushare生成兜底宏观矩阵: {scores}")
+                logger.info(f"[EDB] Markov Z-Score 兜底生成宏观矩阵: {scores}")
             except Exception as fe:
                 import traceback
-                logger.warning(f"[EDB] Tushare 兜底发生异常: {fe}\n{traceback.format_exc()}")
+                logger.warning(f"[EDB] Markov 兜底发生异常: {fe}\n{traceback.format_exc()}")
                 scores = {
                     "composite_score": 0.0, 
                     "market_state": "UNKNOWN", 

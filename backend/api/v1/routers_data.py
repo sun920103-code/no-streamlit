@@ -1,5 +1,5 @@
 """
-Data API — 外部数据同步 (Wind, 等等) + 持仓诊断预警
+Data API — Tushare 财经数据同步 + 持仓诊断预警
 """
 import os
 import sys
@@ -37,134 +37,14 @@ MARKET_INDICES = [
     {"code": "399006.SZ", "name": "创业板指", "en": "ChiNext"},
     {"code": "000905.SH", "name": "中证500", "en": "CSI 500"},
     {"code": "000852.SH", "name": "中证1000", "en": "CSI 1000"},
-    {"code": "HSI.HI",    "name": "恒生指数", "en": "Hang Seng"},
 ]
-
-# ─── Wind 直连单例 — 专属线程 (COM 线程安全) ───
-import threading
-import queue as _queue
-
-class _WindMarketDaemon:
-    """Wind COM 必须在同一线程调用 start() 和所有 API。使用专属守护线程。"""
-    def __init__(self):
-        self._q = _queue.Queue()
-        self._w = None
-        self._ready = threading.Event()
-        self._error = None
-        t = threading.Thread(target=self._run, daemon=True, name="WindMarketThread")
-        t.start()
-        self._ready.wait(timeout=30)
-
-    def _run(self):
-        try:
-            wind_dll_path = r"D:\Wind\x64"
-            wind_bin_path = r"D:\Wind\bin"
-            original_cwd = os.getcwd()
-            try:
-                if hasattr(os, 'add_dll_directory'):
-                    if os.path.exists(wind_dll_path):
-                        os.add_dll_directory(wind_dll_path)
-                    if os.path.exists(wind_bin_path):
-                        os.add_dll_directory(wind_bin_path)
-                if os.path.exists(wind_dll_path):
-                    os.chdir(wind_dll_path)
-                    os.environ['PATH'] = wind_dll_path + ';' + wind_bin_path + ';' + os.environ.get('PATH', '')
-                from WindPy import w
-                os.chdir(original_cwd)
-            except Exception as e:
-                os.chdir(original_cwd)
-                raise e
-
-            status = w.start()
-            if status.ErrorCode != 0:
-                logger.error(f"Wind Market 启动失败: ErrorCode={status.ErrorCode}")
-                self._error = f"ErrorCode={status.ErrorCode}"
-                self._ready.set()
-                return
-
-            self._w = w
-            logger.info("✅ Wind Market daemon 连接成功")
-            self._ready.set()
-
-            while True:
-                try:
-                    item = self._q.get(timeout=1.0)
-                except _queue.Empty:
-                    continue
-                if item is None:
-                    break
-                method_name, args, kwargs, result_q = item
-                try:
-                    method = getattr(self._w, method_name)
-                    result = method(*args, **kwargs)
-                    result_q.put(('ok', result))
-                except Exception as e:
-                    result_q.put(('error', e))
-        except ImportError:
-            logger.warning("WindPy 未安装")
-            self._error = "ImportError"
-            self._ready.set()
-        except Exception as e:
-            logger.error(f"Wind Market daemon 异常: {e}")
-            self._error = str(e)
-            self._ready.set()
-
-    def _call(self, method_name, *args, **kwargs):
-        if self._w is None:
-            return None
-        result_q = _queue.Queue()
-        self._q.put((method_name, args, kwargs, result_q))
-        try:
-            status, result = result_q.get(timeout=30)
-            if status == 'error':
-                raise result
-            return result
-        except _queue.Empty:
-            logger.error(f"Wind {method_name} 超时 (30s)")
-            return None
-
-    def wss(self, *args, **kwargs):
-        return self._call('wss', *args, **kwargs)
-
-    def wsd(self, *args, **kwargs):
-        return self._call('wsd', *args, **kwargs)
-
-    def wsq(self, *args, **kwargs):
-        return self._call('wsq', *args, **kwargs)
-
-    @property
-    def is_connected(self):
-        return self._w is not None and self._error is None
-
-
-_wind_market_daemon = None
-_wind_market_init_lock = threading.Lock()
-
-def _get_wind_direct():
-    """获取 Wind Market daemon 单例。"""
-    global _wind_market_daemon
-    if _wind_market_daemon is not None and _wind_market_daemon.is_connected:
-        return _wind_market_daemon
-    with _wind_market_init_lock:
-        if _wind_market_daemon is not None and _wind_market_daemon.is_connected:
-            return _wind_market_daemon
-        try:
-            _wind_market_daemon = _WindMarketDaemon()
-            if _wind_market_daemon.is_connected:
-                return _wind_market_daemon
-            else:
-                logger.error(f"Wind Market daemon 启动失败: {_wind_market_daemon._error}")
-                return None
-        except Exception as e:
-            logger.error(f"Wind Market 初始化异常: {e}")
-            return None
 
 
 @router.get("/market_quotes")
 async def get_market_quotes():
     """
-    获取 7 大宽基指数实时行情 (5 分钟缓存)。
-    Tushare rt_idx_k 主路径 + Wind wsq 可选增强。
+    获取 6 大宽基指数实时行情 (5 分钟缓存)。
+    纯 Tushare rt_idx_k 路径。
     """
     global _market_quotes_cache, _market_quotes_ts
 
@@ -177,7 +57,6 @@ async def get_market_quotes():
     quotes = []
 
     # ── Tushare 主路径: rt_idx_k ──
-    ts_success = False
     try:
         import importlib
         _scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts")
@@ -186,7 +65,6 @@ async def get_market_quotes():
         _spec.loader.exec_module(_mod)
 
         ts_results = _mod.fetch_realtime_index(codes_list)
-        # 将 Tushare 结果映射到 MARKET_INDICES 格式
         ts_map = {r['code']: r for r in ts_results}
 
         for idx in MARKET_INDICES:
@@ -203,51 +81,9 @@ async def get_market_quotes():
 
         n_valid = sum(1 for q in quotes if q["close"] is not None)
         if n_valid > 0:
-            ts_success = True
             logger.info(f"✅ Tushare rt_idx_k 实时行情: {n_valid}/{len(quotes)} 个指数")
     except Exception as e:
         logger.warning(f"⚠️ Tushare rt_idx_k 异常: {e}")
-
-    # ── Wind 可选增强: 补充 Tushare 缺失的指数 (如 HSI.HI) ──
-    missing_indices = [i for i, q in enumerate(quotes) if q["close"] is None] if ts_success else list(range(len(MARKET_INDICES)))
-    if missing_indices:
-        w = _get_wind_direct()
-        if w is not None:
-            try:
-                if not ts_success:
-                    # Tushare 完全失败, Wind 全量获取
-                    codes_str = ",".join(codes_list)
-                    logger.info(f"🔄 Wind wsq 全量获取: {len(codes_list)} 个指数")
-                else:
-                    # 仅补充缺失的
-                    _missing_codes = [MARKET_INDICES[i]["code"] for i in missing_indices]
-                    codes_str = ",".join(_missing_codes)
-                    logger.info(f"🔄 Wind wsq 增强: {len(_missing_codes)} 个缺失指数")
-
-                data = w.wsq(codes_str, "rt_last,rt_pct_chg")
-                if data is not None and data.ErrorCode == 0 and data.Data:
-                    if not ts_success:
-                        # Wind 全量模式
-                        for j, idx in enumerate(MARKET_INDICES):
-                            val_last = data.Data[0][j] if j < len(data.Data[0]) else None
-                            val_pct = data.Data[1][j] if len(data.Data) > 1 and j < len(data.Data[1]) else None
-                            close_val = float(val_last) if val_last is not None and str(val_last) not in ('nan', 'None', '') else None
-                            pct_val = float(val_pct) * 100.0 if val_pct is not None and str(val_pct) not in ('nan', 'None', '') else None
-                            quotes[j]["close"] = round(close_val, 2) if close_val else None
-                            quotes[j]["pct_chg"] = round(pct_val, 2) if pct_val else None
-                    else:
-                        # 增强模式: 仅填充缺失
-                        for j_w, idx_i in enumerate(missing_indices):
-                            if j_w < len(data.Data[0]):
-                                val_last = data.Data[0][j_w]
-                                val_pct = data.Data[1][j_w] if len(data.Data) > 1 else None
-                                if val_last is not None and str(val_last) not in ('nan', 'None', ''):
-                                    quotes[idx_i]["close"] = round(float(val_last), 2)
-                                if val_pct is not None and str(val_pct) not in ('nan', 'None', ''):
-                                    quotes[idx_i]["pct_chg"] = round(float(val_pct) * 100.0, 2)
-                    logger.info("  ✅ Wind wsq 增强完成")
-            except Exception as e:
-                logger.warning(f"  ⚠️ Wind wsq 异常: {e}")
 
     n_valid_final = sum(1 for q in quotes if q["close"] is not None)
     if n_valid_final > 0:
@@ -260,7 +96,7 @@ async def get_market_quotes():
                 "updated_at": (_market_quotes_ts or now).strftime("%H:%M:%S"),
                 "warning": "数据源暂不可用，使用缓存"}
     else:
-        return {"status": "error", "quotes": [], "message": "Tushare 和 Wind 均无法获取实时行情"}
+        return {"status": "error", "quotes": [], "message": "Tushare 无法获取实时行情"}
 
 class SyncClientPortfolioRequest(BaseModel):
     fund_codes: List[str]

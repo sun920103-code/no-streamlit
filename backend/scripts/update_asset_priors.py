@@ -108,36 +108,8 @@ def fetch_nav_data(all_codes: list, years: int = 3) -> pd.DataFrame:
     except Exception as e:
         print(f"❌ Tushare 下载异常: {e}")
 
-    # ── Wind 可选增强: 补充 Tushare 缺失的基金 ──
-    fetched_codes = set(all_nav.columns) if not all_nav.empty else set()
-    missing_codes = [c for c in all_codes if c not in fetched_codes
-                     or (c in fetched_codes and all_nav[c].notna().sum() < 20)]
-    if missing_codes:
-        try:
-            from WindPy import w
-            if w.isconnected():
-                print(f"🔄 Wind 增强: 补充 {len(missing_codes)} 只 Tushare 缺失基金...")
-                for i in range(0, len(missing_codes), 40):
-                    batch = missing_codes[i:i + 40]
-                    res = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
-                    if res.ErrorCode == 0:
-                        if len(batch) == 1:
-                            df_w = pd.DataFrame({batch[0]: res.Data[0]}, index=pd.to_datetime(res.Times))
-                        else:
-                            df_w = pd.DataFrame(dict(zip(batch, res.Data)), index=pd.to_datetime(res.Times))
-                        if all_nav.empty:
-                            all_nav = df_w
-                        else:
-                            for c in df_w.columns:
-                                if c in all_nav.columns:
-                                    all_nav[c] = df_w[c].combine_first(all_nav[c])
-                                else:
-                                    all_nav = all_nav.join(df_w[[c]], how='outer')
-                print(f"✅ Wind 增强完成")
-        except ImportError:
-            pass
-        except Exception as e:
-            print(f"⚠️ Wind 增强跳过: {e}")
+
+    # [2026-04-10] Wind API 已永久移除, 纯 Tushare 模式
 
     if not all_nav.empty:
         all_nav.sort_index(inplace=True)

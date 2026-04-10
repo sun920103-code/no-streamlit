@@ -1,20 +1,22 @@
 """
-智选平台 — Wind 基金深度资料下载脚本
-=====================================
-从 Wind API 批量下载 114 只核心精选基金的深度资料，
-输出结构化 JSON 供前端表格展示。
+[已废弃] 智选平台 — 基金深度资料下载脚本
+========================================
+⚠️ 2026-04-10: Wind API 已永久移除, 本脚本不再可用。
+前端 (zxGetFundProfiles) 也未实际调用此接口。
 
-已验证可用 Wind WSS 字段:
-  基本信息: sec_name, fund_setupdate, fund_mgrcomp, fund_investtype,
-            fund_fundmanager, fund_custodianbank, fund_benchmark,
-            fund_fundscale, fund_risklevel, fund_investobject
-  费率信息: fund_managementfeeratio, fund_custodianfeeratio
-  风险指标: risk_downside (最大回撤, 需 startDate/endDate)
+如需基金基本信息, 请使用 tushare_fetcher.fetch_fund_metadata()。
+费率/风险指标等 Wind 独占数据已不可获取。
 
-使用方式:
-    python fetch_fund_profiles.py            # 批量下载全部 114 只
-    python fetch_fund_profiles.py 000011.OF  # 单只测试
+保留此文件仅作历史参考。
 """
+import sys
+print("⚠️ [已废弃] fetch_fund_profiles.py 依赖 Wind API, 已不可用。")
+print("请使用 tushare_fetcher.fetch_fund_metadata() 替代。")
+sys.exit(0)
+
+# ══════════════════════════════════════════════
+# 以下为历史代码 (仅作参考, 不会执行)
+# ══════════════════════════════════════════════
 
 import os
 import sys

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-独立 Wind 客户持仓同步脚本 — 在子进程中运行, 避免 WindPy 与 Streamlit 线程冲突。
+客户持仓同步脚本 — 纯 Tushare Pro 数据源。
 
 用法: python scripts/sync_client_holdings.py <codes_comma_sep> <output_csv_path>
 输出: JSON 到 stdout (供 Streamlit 解析)
@@ -81,22 +81,12 @@ def main():
         from datetime import datetime, timedelta
 
         tushare_used = False
+
+        # [2026-04-10] Wind API 已永久移除, 纯 Tushare 模式
         wind_available = False
-
-        # Wind 可选增强: 仅在已连接时使用, 不主动启动
         w = None
-        try:
-            from services.wind_fetcher import init_wind
-            w = init_wind()
-            if w is not None:
-                wind_available = True
-                logging.info("✅ Wind 已连接, 将作为可选增强数据源")
-        except ImportError:
-            logging.info("ℹ️ WindPy 未安装, 纯 Tushare 模式")
-        except Exception:
-            pass
 
-        logging.info(f"🔄 Tushare 主路径 + {'Wind 增强' if wind_available else '无 Wind'}, 开始处理 {len(codes)} 只基金...")
+        logging.info(f"🔄 纯 Tushare 模式, 开始处理 {len(codes)} 只基金...")
 
         end_date = datetime.today().strftime('%Y-%m-%d')
         start_date = '2020-01-01'
@@ -127,38 +117,8 @@ def main():
         except Exception as e_ts:
             logging.warning(f"  ⚠️ Tushare NAV 异常: {e_ts}")
 
-        # ── Wind 可选增强: 补充 Tushare 缺失的基金 ──
-        _wsd_codes = [c + '.OF' if '.' not in c else c for c in codes]
-        if wind_available:
-            fetched = set()
-            if all_nav_dfs:
-                for df_tmp in all_nav_dfs:
-                    fetched.update(df_tmp.columns)
-            missing_wsd = [(wsd_c, bare) for wsd_c, bare
-                           in zip(_wsd_codes, [c.split('.')[0].zfill(6) for c in codes])
-                           if bare not in fetched]
-            if missing_wsd:
-                logging.info(f"🔄 Wind 增强: 补充 {len(missing_wsd)} 只 Tushare 缺失基金 NAV...")
-                _ms_codes = [x[0] for x in missing_wsd]
-                for batch_i in range(0, len(_ms_codes), BATCH_SIZE):
-                    batch = _ms_codes[batch_i:batch_i + BATCH_SIZE]
-                    try:
-                        nav_data = w.wsd(','.join(batch), "nav_adj", start_date, end_date, "")
-                        if nav_data.ErrorCode == 0:
-                            if len(batch) == 1:
-                                df_batch = pd.DataFrame({batch[0]: nav_data.Data[0]}, index=nav_data.Times)
-                            else:
-                                df_batch = pd.DataFrame(nav_data.Data, index=nav_data.Codes, columns=nav_data.Times).T
-                            df_batch.index = pd.to_datetime(df_batch.index)
-                            df_batch.columns = [str(c).split('.')[0].zfill(6) for c in df_batch.columns]
-                            all_nav_dfs.append(df_batch)
-                            logging.info(f"  ✅ Wind 增强 NAV: {len(df_batch.columns)} 只")
-                        time.sleep(0.3)
-                    except Exception as e:
-                        logging.warning(f"  ⚠️ Wind 增强 NAV 异常: {e}")
-
         if not all_nav_dfs:
-            raise RuntimeError("Tushare 和 Wind 均无法获取任何净值数据")
+            raise RuntimeError("Tushare 无法获取任何净值数据")
         df_nav = pd.concat(all_nav_dfs, axis=1)
         df_nav = df_nav.loc[:, ~df_nav.columns.duplicated(keep='first')]
 

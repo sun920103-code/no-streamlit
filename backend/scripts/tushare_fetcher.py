@@ -576,6 +576,179 @@ def fetch_fund_portfolio(fund_codes: list, rpt_date: str = None) -> dict:
 # 7. 实时指数行情 (替代 w.wsq rt_last,rt_pct_chg)
 # ═══════════════════════════════════════════
 
+# ═══════════════════════════════════════════
+# 8. 国债收益率曲线 (替代 Wind EDB S0059744/S0059749)
+# ═══════════════════════════════════════════
+
+def fetch_bond_yields(start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    获取中债国债收益率曲线 (1Y / 10Y), 替代 Wind EDB。
+    Tushare API: yc_cb (中债收益率曲线, 需 120 积分)
+
+    :param start_date: 'YYYY-MM-DD'
+    :param end_date: 'YYYY-MM-DD'
+    :return: DataFrame, index=日期, columns=['yield_1y', 'yield_10y']
+    """
+    api = _get_api()
+    start_ts = start_date.replace('-', '')
+    end_ts = end_date.replace('-', '')
+
+    try:
+        logging.info("[Tushare] 拉取中债国债收益率曲线 (yc_cb)...")
+        df = api.yc_cb(
+            ts_code='1001.CB',
+            curve_type='0',
+            start_date=start_ts,
+            end_date=end_ts,
+            fields='trade_date,yield_1y,yield_10y'
+        )
+        if df is not None and not df.empty:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+            df = df.sort_values('trade_date').drop_duplicates(subset='trade_date', keep='last')
+            df = df.set_index('trade_date')
+            # 列名对齐 macro_data_collector
+            df.columns = ['yield_1y', 'yield_10y']
+            df = df.apply(pd.to_numeric, errors='coerce')
+            logging.info(f"  [Tushare] 国债收益率: {len(df)} 天")
+            return df
+        else:
+            logging.warning("  [Tushare] yc_cb 返回空")
+    except Exception as e:
+        logging.warning(f"  [Tushare] yc_cb 异常: {e}")
+
+    return pd.DataFrame()
+
+
+# ═══════════════════════════════════════════
+# 9. Shibor / LPR 利率 (替代 Wind EDB 7天逆回购/LPR_5Y)
+# ═══════════════════════════════════════════
+
+def fetch_shibor_rates(start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    获取 Shibor 7天利率 + LPR 5年期, 替代 Wind EDB 政策利率。
+    Tushare API: shibor + shibor_lpr
+
+    :return: DataFrame, index=日期, columns=['repo_7d', 'lpr_5y']
+    """
+    api = _get_api()
+    start_ts = start_date.replace('-', '')
+    end_ts = end_date.replace('-', '')
+    result = pd.DataFrame()
+
+    # Shibor 7天 (日频)
+    try:
+        logging.info("[Tushare] 拉取 Shibor 7天利率...")
+        df_shibor = api.shibor(start_date=start_ts, end_date=end_ts, fields='date,1w')
+        if df_shibor is not None and not df_shibor.empty:
+            df_shibor['date'] = pd.to_datetime(df_shibor['date'])
+            df_shibor = df_shibor.sort_values('date').set_index('date')
+            df_shibor.columns = ['repo_7d']
+            df_shibor['repo_7d'] = pd.to_numeric(df_shibor['repo_7d'], errors='coerce')
+            result = df_shibor
+            logging.info(f"  [Tushare] Shibor 7D: {len(df_shibor)} 天")
+        time.sleep(0.3)
+    except Exception as e:
+        logging.warning(f"  [Tushare] Shibor 异常: {e}")
+
+    # LPR 5年 (月频)
+    try:
+        logging.info("[Tushare] 拉取 LPR 5年期...")
+        df_lpr = api.shibor_lpr(start_date=start_ts, end_date=end_ts, fields='date,lpr_5y')
+        if df_lpr is not None and not df_lpr.empty:
+            df_lpr['date'] = pd.to_datetime(df_lpr['date'])
+            df_lpr = df_lpr.sort_values('date').set_index('date')
+            df_lpr.columns = ['lpr_5y']
+            df_lpr['lpr_5y'] = pd.to_numeric(df_lpr['lpr_5y'], errors='coerce')
+            if result.empty:
+                result = df_lpr
+            else:
+                result = result.join(df_lpr, how='outer')
+                result['lpr_5y'] = result['lpr_5y'].ffill()
+            logging.info(f"  [Tushare] LPR 5Y: {len(df_lpr)} 条")
+        time.sleep(0.3)
+    except Exception as e:
+        logging.warning(f"  [Tushare] LPR 异常: {e}")
+
+    return result
+
+
+# ═══════════════════════════════════════════
+# 10. 指数每日估值 (替代 Wind WSD pe_ttm/pb_lf)
+# ═══════════════════════════════════════════
+
+def fetch_index_valuation(ts_code: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """
+    获取指数每日估值指标 (PE_TTM / PB / 换手率), 替代 Wind WSD。
+    Tushare API: index_dailybasic (需 400 积分)
+
+    :param ts_code: 指数代码, 如 '000300.SH'
+    :return: DataFrame, index=日期, columns=['pe_ttm', 'pb', 'turnover_rate']
+    """
+    api = _get_api()
+    start_ts = start_date.replace('-', '')
+    end_ts = end_date.replace('-', '')
+
+    try:
+        logging.info(f"[Tushare] 拉取 {ts_code} 指数估值 (index_dailybasic)...")
+        df = api.index_dailybasic(
+            ts_code=ts_code,
+            start_date=start_ts,
+            end_date=end_ts,
+            fields='trade_date,pe_ttm,pb,turnover_rate'
+        )
+        if df is not None and not df.empty:
+            df['trade_date'] = pd.to_datetime(df['trade_date'])
+            df = df.sort_values('trade_date').set_index('trade_date')
+            df = df.apply(pd.to_numeric, errors='coerce')
+            logging.info(f"  [Tushare] {ts_code} 估值: {len(df)} 天")
+            return df
+        else:
+            logging.warning(f"  [Tushare] {ts_code} index_dailybasic 返回空")
+    except Exception as e:
+        logging.warning(f"  [Tushare] index_dailybasic 异常: {e}")
+
+    return pd.DataFrame()
+
+
+# ═══════════════════════════════════════════
+# 11. PPI 同比 (替代 Wind EDB M0001227)
+# ═══════════════════════════════════════════
+
+def fetch_ppi(limit: int = 150) -> pd.DataFrame:
+    """
+    获取 PPI 全部工业品当月同比。
+    Tushare API: cn_ppi
+
+    :return: DataFrame, index=月份, columns=['PPI_YoY']
+    """
+    api = _get_api()
+    try:
+        logging.info("[Tushare] 拉取 PPI 同比...")
+        df = api.cn_ppi(limit=limit)
+        if df is not None and not df.empty:
+            month_col = 'month' if 'month' in df.columns else 'MONTH'
+            ppi_col = 'ppi_yoy' if 'ppi_yoy' in df.columns else 'ppiip_yoy'
+            # 容错: 不同 Tushare 版本字段名可能不同
+            if ppi_col not in df.columns:
+                for c in df.columns:
+                    if 'yoy' in c.lower() and 'ppi' in c.lower():
+                        ppi_col = c
+                        break
+            if month_col in df.columns and ppi_col in df.columns:
+                df = df[[month_col, ppi_col]].set_index(month_col)
+                df.columns = ['PPI_YoY']
+                df.index = pd.to_datetime(df.index, format='%Y%m', errors='coerce')
+                df = df.sort_index()
+                logging.info(f"  [Tushare] PPI: {len(df)} 个月")
+                return df
+            else:
+                logging.warning(f"  [Tushare] PPI 列名不匹配: {df.columns.tolist()}")
+    except Exception as e:
+        logging.warning(f"  [Tushare] cn_ppi 异常: {e}")
+
+    return pd.DataFrame()
+
+
 def fetch_realtime_index(index_codes: list) -> list:
     """
     获取指数实时行情 (替代 Wind w.wsq).

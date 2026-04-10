@@ -66,36 +66,7 @@ def get_wind_fund_profiles(fund_codes: list) -> dict:
     except Exception as e:
         print(f"[基金资料] Tushare NAV 异常: {e}")
 
-    # ── 3. Wind 可选增强 (有 Wind 时自动增强元数据与 NAV) ──
-    wind_basic = {}
-    try:
-        from WindPy import w
-        if w.isconnected():
-            current_date_str = current_date.strftime("%Y%m%d")
-            basic_fields = "sec_name,fund_fundmanager,fund_setupdate,prt_fundnetasset_total"
-            res_basic = w.wss(','.join(unique_codes), basic_fields, f"tradeDate={current_date_str}")
-            if res_basic.ErrorCode == 0:
-                df_wb = pd.DataFrame(res_basic.Data).T
-                df_wb.columns = ["sec_name", "fund_fundmanager", "fund_setupdate", "prt_fundnetasset_total"]
-                df_wb.index = unique_codes
-                for code in unique_codes:
-                    if code in df_wb.index:
-                        wind_basic[code] = df_wb.loc[code]
-                print(f"[基金资料] Wind 增强元数据: {len(wind_basic)} 只基金")
-
-            # Wind 增强 NAV (补充 Tushare 缺失的)
-            if df_nav.empty:
-                res_ts = w.wsd(','.join(unique_codes), "nav_adj", start_3y, end_date, "")
-                if res_ts.ErrorCode == 0:
-                    df_nav = pd.DataFrame(res_ts.Data).T
-                    df_nav.columns = unique_codes
-                    df_nav.index = pd.to_datetime(res_ts.Times)
-                    df_nav.dropna(how='all', inplace=True)
-                    print(f"[基金资料] Wind 增强 NAV: {len(df_nav.columns)} 列, {len(df_nav)} 行")
-    except ImportError:
-        pass
-    except Exception as e:
-        print(f"[基金资料] Wind 增强跳过: {e}")
+    # [2026-04-10] Wind API 已永久移除, 纯 Tushare 路径
 
     # Format helpers
     def fmt_num(val, decimals=2, suffix=""):
