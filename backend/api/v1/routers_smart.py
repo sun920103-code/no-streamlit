@@ -296,10 +296,20 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     # 载入基金池
     fund_pool = _load_fund_pool()
 
-    # 判断风险约束下是否能"基本"摸到用户的收益目标 (允许30%相对容差)
+    # ── can_achieve 判定 (严格双约束) ──
+    # 收益约束: 优化器在波动率红线内能达到目标收益的 90% 以上
+    # 波动率约束: 优化器估算的组合波动率不得超过用户设定的红线 (0容差)
     # 如果 user target 很高，但 max_vol 压得很死，base_ret 远远达不到目标，进入情景B
-    # 同时如果因为激进推高而导致波动率强行突破用户配置的红线，亦判定为失效，强制降级
-    can_achieve = (base_ret >= target_ret_decimal * 0.70) and (base_vol <= max_vol_decimal * 1.05 + 0.001)
+    ret_feasible = base_ret >= target_ret_decimal * 0.90
+    vol_feasible = base_vol <= max_vol_decimal + 0.001  # 仅允许浮点精度误差
+    can_achieve = ret_feasible and vol_feasible
+    logger.info(
+        f"[智选] can_achieve 判定: base_ret={base_ret:.4f} vs target={target_ret_decimal:.4f} "
+        f"(需≥{target_ret_decimal*0.90:.4f}, {'✅' if ret_feasible else '❌'}), "
+        f"base_vol={base_vol:.4f} vs max_vol={max_vol_decimal:.4f} "
+        f"(需≤{max_vol_decimal+0.001:.4f}, {'✅' if vol_feasible else '❌'}) → "
+        f"{'情景A' if can_achieve else '情景B'}"
+    )
 
     scenarios = []
 
@@ -365,7 +375,7 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     wind_data = wind_service.get_wind_fund_profiles(list(all_codes))
     
     # 将基金档案附到每个方案，并用真实 NAV 数据覆盖 KPI
-    period_map = {"半年": 1, "1年": 1, "3年": 3}
+    period_map = {"半年": 0.5, "1年": 1, "3年": 3}
     period_years = period_map.get(period, 1)
 
     # ── 提前批量拉取跨方案所有去重代码的 Tushare NAV ──
@@ -424,6 +434,52 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             sc["kpi"]["sharpe"] = "N/A"
             sc["kpi"]["_source"] = "unavailable"
             logger.warning(f"[智选] {sc['name']} 真实 KPI 计算异常, 显示 N/A: {e}")
+
+    # ── 后验波动率约束校验 ──
+    # 即使 can_achieve 在先验模型下通过, 真实 NAV-based KPI 可能暴露出实际波动率超标
+    # 此时必须强制降级为情景 B, 确保前端展示的方案绝不违反用户设定的红线
+    if can_achieve:
+        for sc in scenarios:
+            realized_vol = sc["kpi"].get("ann_vol_pct")
+            if isinstance(realized_vol, (int, float)) and realized_vol > max_vol_pct * 1.0 + 0.01:
+                logger.warning(
+                    f"[智选] 后验降级: {sc['name']} 真实波动率 {realized_vol:.2f}% "
+                    f"超过用户红线 {max_vol_pct:.2f}%, 强制降级为情景B"
+                )
+                can_achieve = False
+                break
+
+    if not can_achieve and len(scenarios) > 1:
+        # 降级: 丢弃所有 3 套方案, 仅保留受约束最大化夏普解
+        logger.info("[智选] 后验降级触发: 重构为情景B (仅 1 套受约束方案)")
+        sc_b = _build_scenario(
+            name="稳健配置 (受约束最大化夏普解)",
+            base_weights=base_rp_result.get("target_weights", {}),
+            target_ret=target_ret_decimal,
+            max_vol=max_vol_decimal,
+            capital=capital_yuan,
+            fund_pool=fund_pool,
+            ret_multiplier=1.0,
+            vol_anchored=True,
+            hrp_estimated_vol=base_vol,
+            hrp_estimated_ret=base_ret,
+            risk_concentration=base_rp_result.get("risk_concentration", 0.5),
+            quadrant=current_q,
+        )
+        # 复用已缓存的 NAV 数据计算 KPI
+        try:
+            real_metrics_b = wind_service.compute_portfolio_metrics(
+                sc_b["allocations"], period_years=period_years, cached_nav_df=cached_df_nav
+            )
+            if real_metrics_b.get("source") in ["wind", "tushare"]:
+                sc_b["kpi"]["ann_return_pct"] = real_metrics_b["ann_return_pct"]
+                sc_b["kpi"]["ann_vol_pct"] = real_metrics_b["ann_vol_pct"]
+                sc_b["kpi"]["max_drawdown_pct"] = real_metrics_b["max_drawdown_pct"]
+                sc_b["kpi"]["sharpe"] = real_metrics_b["sharpe"]
+                sc_b["kpi"]["_source"] = f"{real_metrics_b.get('source').upper()}历史波动与收益"
+        except Exception:
+            pass
+        scenarios = [sc_b]
 
     # ── 强行绑定视觉规则：让进取和防守的收益率严格遵循稳健基准的 +/- 20% ──
     # 使用用户侧边栏设定的目标收益率作为稳健排布的基础核心锚点，以保持产品设定的逻辑绝对自洽

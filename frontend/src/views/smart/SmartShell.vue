@@ -18,18 +18,18 @@
             <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">配置资金 (万元)</label>
             <div class="relative flex items-center">
               <span class="absolute left-4 text-on-surface-variant/50 text-sm">¥</span>
-              <input type="number" v-model.number="store.zx_capital" min="1" step="100" class="w-full bg-surface-container border-none rounded-xl pl-10 pr-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
+              <input type="number" v-model.number="store.zx_capital" min="1" step="100" placeholder="请输入配置资金" class="w-full bg-surface-container border-none rounded-xl pl-10 pr-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
             </div>
           </div>
           <!-- Exp. Return & Max Volatility -->
           <div class="grid grid-cols-2 gap-4">
             <div class="group">
               <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">预期收益 (%)</label>
-              <input type="number" v-model.number="store.zx_targetReturn" min="0" max="50" step="0.5" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
+              <input type="number" v-model.number="store.zx_targetReturn" min="0" max="50" step="0.5" placeholder="如 8" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
             </div>
             <div class="group">
               <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">年化波动率 (%)</label>
-              <input type="number" v-model.number="store.zx_maxVol" min="0" max="30" step="0.5" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
+              <input type="number" v-model.number="store.zx_maxVol" min="0" max="30" step="0.5" placeholder="如 15" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base"/>
             </div>
           </div>
           <small class="block text-[11px] text-[#9f403d] mt-1 font-medium">核心风控红线：超限将触发降级配置</small>
@@ -38,7 +38,8 @@
           <div class="group">
             <label class="block text-[11px] font-semibold text-on-surface-variant mb-2 tracking-wide">预计持仓时间</label>
             <div class="relative flex items-center">
-              <select v-model="store.zx_period" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 text-on-surface font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base appearance-none cursor-pointer" style="background-image: none;">
+              <select v-model="store.zx_period" class="w-full bg-surface-container border-none rounded-xl px-4 py-3 font-bold focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest transition-all text-base appearance-none cursor-pointer" :class="store.zx_period ? 'text-on-surface' : 'text-on-surface-variant/50'" style="background-image: none;">
+                <option value="" disabled>请选择持仓周期</option>
                 <option value="半年">半年</option>
                 <option value="1年">1年</option>
                 <option value="3年">3年</option>

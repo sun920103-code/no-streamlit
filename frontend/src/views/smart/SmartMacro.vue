@@ -161,16 +161,6 @@
             </p>
           </div>
 
-          <!-- Scenario C - Highlighted -->
-          <div v-else-if="result.scenario_type === 'C'" class="bg-[#ffffff] p-4 rounded-lg border-2 border-[#9f403d] ring-2 ring-[#9f403d]/5">
-            <div class="flex justify-between items-center mb-2">
-              <span class="text-[10px] font-black text-[#9f403d] tracking-[0.2em] uppercase">情景 C — 激进边界</span>
-              <span class="material-symbols-outlined text-[#9f403d] text-lg" data-icon="error_outline" style="font-variation-settings: 'FILL' 1;">error_outline</span>
-            </div>
-            <p class="text-[11px] text-[#2b3437] font-semibold leading-relaxed">
-              目标收益过高且脱离有效前沿上限。已自动匹配当前环境下的合法全局最大暴露度方案。
-            </p>
-          </div>
 
           <!-- Inactive Scenarios (Visual only) -->
           <div class="flex-grow flex flex-col gap-2">
@@ -188,13 +178,7 @@
               </div>
               <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
             </div>
-            <div v-if="result.scenario_type !== 'C'" class="bg-[#ffffff]/50 p-2.5 px-4 rounded-lg border border-transparent flex items-center justify-between opacity-70">
-              <div class="flex flex-col gap-1">
-                <span class="text-[10px] font-bold text-[#737c7f] uppercase">情景 C — 激进边界</span>
-                <span class="text-[9px] text-[#737c7f]/80">目标脱离前沿边界，强制匹配最高风险。</span>
-              </div>
-              <span class="material-symbols-outlined text-[#737c7f]/30 text-sm" data-icon="radio_button_unchecked">radio_button_unchecked</span>
-            </div>
+
           </div>
         </div>
       </section>
@@ -501,7 +485,7 @@
         <!-- Typography Stack -->
         <div class="space-y-8 flex flex-col items-center">
           <!-- Action Button replaces the Heading Text -->
-          <button @click="runMacroAllocation" :disabled="loading" class="px-12 text-[#f5f7ff] rounded-2xl shadow-2xl transition-all active:scale-[0.98] group relative overflow-hidden flex flex-col items-center justify-center min-w-[520px] py-10 border border-white/5 bg-gradient-to-br from-[#1e3a8a] to-[#172554] disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none" style="box-shadow: 0 25px 50px -12px rgba(30, 58, 138, 0.35);">
+          <button @click="runMacroAllocation" :disabled="loading || !paramsReady" class="px-12 text-[#f5f7ff] rounded-2xl shadow-2xl transition-all active:scale-[0.98] group relative overflow-hidden flex flex-col items-center justify-center min-w-[520px] py-10 border border-white/5 bg-gradient-to-br from-[#1e3a8a] to-[#172554] disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none" style="box-shadow: 0 25px 50px -12px rgba(30, 58, 138, 0.35);">
             <div class="relative z-10 flex flex-col items-center gap-4">
               <!-- All-Weather Season Icons -->
               <div class="flex items-center gap-6 opacity-90">
@@ -517,8 +501,11 @@
             </div>
             <div class="absolute inset-0 bg-gradient-to-tr from-black/20 to-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
           </button>
-          <p class="text-lg text-[#586064] font-light leading-relaxed max-w-xl mx-auto opacity-80" v-if="!loading">
+          <p class="text-lg text-[#586064] font-light leading-relaxed max-w-xl mx-auto opacity-80" v-if="!loading && paramsReady">
             点击上方引擎，系统将自动从 <span class="text-[#2b3437] font-medium">EDB</span> 获取宏观因子数据，定位当前经济周期象限，并生成配置方案。
+          </p>
+          <p class="text-base text-[#9f403d] font-medium leading-relaxed max-w-xl mx-auto" v-if="!loading && !paramsReady">
+            ⚠️ 请先在左侧面板填写<b>配置资金</b>、<b>预期收益</b>、<b>年化波动率</b>和<b>持仓周期</b>后启动引擎
           </p>
         </div>
         <!-- Terminal-style Loading Indicators -->
@@ -581,7 +568,16 @@ const qColors = {
   deflation: { bg: '#DBEAFE', icon: '❄️' },
 }
 
+/** 所有必填参数是否已填写 */
+const paramsReady = computed(() => {
+  return store.zx_capital > 0 && store.zx_targetReturn > 0 && store.zx_maxVol > 0 && !!store.zx_period
+})
+
 async function runMacroAllocation() {
+  if (!paramsReady.value) {
+    error.value = '请先在左侧面板完整填写配置资金、预期收益、年化波动率和持仓周期后再启动引擎'
+    return
+  }
   loading.value = true
   error.value = null
   try {

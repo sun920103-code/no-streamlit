@@ -238,7 +238,7 @@ def _get_empty_profile(code):
     }
 
 
-def compute_portfolio_metrics(allocations: list, period_years: int = 1, cached_nav_df: pd.DataFrame = None) -> dict:
+def compute_portfolio_metrics(allocations: list, period_years: float = 1.0, cached_nav_df: pd.DataFrame = None) -> dict:
     """
     基于真实基金 NAV 时序数据计算组合级 KPI。
     数据源: Tushare Pro (唯一) 或预缓存 DataFrame。

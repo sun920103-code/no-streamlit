@@ -8,11 +8,11 @@ import { defineStore } from 'pinia'
 
 export const useSmartStore = defineStore('zx_smartSelection', {
   state: () => ({
-    // ── 全局配置参数 (智选平台独立) ──
-    zx_capital: 1000,            // 万元
-    zx_targetReturn: 8.0,        // %
-    zx_maxVol: 15.0,             // %
-    zx_period: '1年',            // 半年/1年/3年
+    // ── 全局配置参数 (智选平台独立, 初始为空, 需用户手动输入) ──
+    zx_capital: null,            // 万元
+    zx_targetReturn: null,       // %
+    zx_maxVol: null,             // %
+    zx_period: '',               // 半年/1年/3年
 
     // ── 基金池 ──
     zx_fundPool: [],             // 114只核心基金
