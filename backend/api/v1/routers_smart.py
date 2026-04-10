@@ -222,6 +222,7 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     wind_actually_alive = False  # Wind 已移除, 保留变量以兼容下游逻辑
     scores = None
 
+    z = {}  # Z-score 字典, 在 try 内赋值, except 分支保留空字典
     try:
         from services.markov_engine import get_current_macro_regime_live
         hmm_result = get_current_macro_regime_live()
@@ -261,7 +262,7 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         "通胀商品": round(float(-_val_t * 1.5), 3),
         "利率环境": round(float(_macro_t * 1.2), 3),
         "信用扩张": round(float(_composite * 1.5), 3),
-        "海外环境": 0.0,
+        "海外环境": round(float(math.tanh(-z.get("US10Y", 0) / 2.0)), 3),
         "市场情绪": round(float(_composite * 2.0), 3),
     }
 

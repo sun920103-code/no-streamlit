@@ -376,13 +376,13 @@ def _compute_fund_summary(task_id: str, fund_codes: List[str]) -> Dict:
         if monthly_pl > 2:
             status = "绩优"
         elif monthly_pl > 0:
-            status = "活跃"
+            status = "良好"
         elif monthly_pl > -1:
             status = "平稳"
         elif volatility > 20:
             status = "高波动"
         else:
-            status = "持仓观察"
+            status = "其他"
 
         enhanced[bare] = {
             "name": fund_name if fund_name and fund_name != "nan" else "",

@@ -132,6 +132,10 @@ def get_current_macro_regime_live() -> Dict[str, Any]:
     # 执行 Z-Score 规范化：使用过去均值和标准差 (即标准化时序)
     # 确保列包含: PMI, CPI_YoY, M2_Growth, Credit_Impulse
     required_cols = ['PMI', 'CPI_YoY', 'M2_Growth', 'Credit_Impulse']
+    # US10Y 作为可选海外因子 (Tushare us_tycr 接口, 积分 ≥ 120)
+    has_us10y = 'US10Y' in df_macro.columns and df_macro['US10Y'].notna().sum() > 10
+    hmm_cols = list(required_cols)  # HMM 仍只用 4 根国内因子训练
+    zscore_cols = list(required_cols) + (['US10Y'] if has_us10y else [])
     for col in required_cols:
         if col not in df_macro.columns:
             df_macro[col] = 0.0
@@ -139,26 +143,27 @@ def get_current_macro_regime_live() -> Dict[str, Any]:
     df_zscore = df_macro.copy()
     
     # 获取最新的绝对指标值，用于返回展示
-    latest_absolute_values = {col: float(df_macro[col].iloc[-1]) for col in required_cols}
+    latest_absolute_values = {col: float(df_macro[col].iloc[-1]) for col in zscore_cols if col in df_macro.columns}
     latest_zscores = {}
     
     import warnings
     # 忽略计算标准差时的 RuntimeWarning
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for col in required_cols:
+        for col in zscore_cols:
+            if col not in df_macro.columns:
+                continue
             mean_val = df_macro[col].mean()
             std_val = df_macro[col].std()
             if std_val > 1e-6:
                 df_zscore[col] = (df_macro[col] - mean_val) / std_val
             else:
                 df_zscore[col] = 0.0
-            latest_zscores[col] = float(df_zscore[col].iloc[-1])
+            latest_zscores[col] = float(df_zscore[col].dropna().iloc[-1]) if df_zscore[col].dropna().shape[0] > 0 else 0.0
             
-    # 只使用这四根因子的 Z-Score 来喂给 HMM 引擎
+    # 只使用 4 根国内因子的 Z-Score 来喂给 HMM 引擎 (US10Y 仅做 Z-Score 输出, 不参与 HMM 训练)
     engine = MarkovMacroEngine(n_components=4)
-    # HMM 会根据 4 维空间自动无监督聚类
-    result = engine.predict_current_regime(df_zscore[required_cols])
+    result = engine.predict_current_regime(df_zscore[hmm_cols])
     
     # 进行四象限业务语义打标 (简化的启发式映射)
     # 根据这一类别的平均 PMI 和 CPI 来推测

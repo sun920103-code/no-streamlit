@@ -195,7 +195,7 @@ async def get_macro_quadrant(payload: QuadrantRequest = None):
                 "通胀商品": round(math.tanh(z.get("CPI_YoY", 0) / 2.0), 3),
                 "利率环境": round(math.tanh(-z.get("Credit_Impulse", 0) / 2.0), 3),
                 "信用扩张": round(math.tanh(z.get("Credit_Impulse", 0) / 2.0), 3),
-                "海外环境": 0.0,
+                "海外环境": round(math.tanh(-z.get("US10Y", 0) / 2.0), 3),
                 "市场情绪": round(math.tanh(z.get("M2_Growth", 0) / 3.0), 3),
             }
 

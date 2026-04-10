@@ -449,7 +449,7 @@ def _run_pipeline_sync(
             "通胀商品": round(math.tanh(z_cpi / 2.0), 3),
             "信用扩张": round(math.tanh(z_credit / 2.0), 3),
             "利率环境": round(math.tanh(-z_credit / 2.0), 3), # 信用扩张时利率通常向下
-            "海外环境": 0.0,
+            "海外环境": round(math.tanh(-zscores.get("US10Y", 0.0) / 2.0), 3),
             "市场情绪": round(math.tanh(z_pmi / 3.0), 3), # 经济好时情绪通常偏好
         }
         step1_factors = _normalize_factor_keys(step1_factors)
@@ -610,17 +610,26 @@ def _run_pipeline_sync(
                     try:
                         import services.multi_agent as _ma_mod
                         _moe_meta = getattr(_ma_mod, '_last_moe_metadata', None) or {}
+                        logger.info(f"[Step 3 Radar Debug] _moe_meta keys: {list(_moe_meta.keys())}")
                         if "factor_scores" in _moe_meta:
+                            _fs = _moe_meta["factor_scores"]
+                            logger.info(f"[Step 3 Radar Debug] factor_scores from MOE: {_fs}")
                             for f in MACRO_FACTORS_6:
-                                step3_factors[f] = _moe_meta["factor_scores"].get(f, 0.0)
+                                step3_factors[f] = _fs.get(f, 0.0)
                         else:
+                            # fallback: 从 sensitivity_modifiers 反推
                             _modifiers = _moe_meta.get("sensitivity_modifiers", {})
+                            logger.info(f"[Step 3 Radar Debug] No factor_scores, using sensitivity_modifiers: {_modifiers}")
                             for f in MACRO_FACTORS_6:
                                 mod_val = _modifiers.get(f, 1.0)
                                 step3_factors[f] = round((mod_val - 1.0) * 2.0, 3)
-                    except Exception:
-                        pass
+                    except Exception as e_fs:
+                        logger.warning(f"[Step 3 Radar Debug] factor_scores extraction failed: {e_fs}")
+                    
+                    logger.info(f"[Step 3 Radar] step3_factors BEFORE normalize: {step3_factors}")
                     step3_factors = _normalize_factor_keys(step3_factors)
+                    logger.info(f"[Step 3 Radar] step3_factors AFTER normalize: {step3_factors}")
+                    log_fn(f"📊 研报因子雷达: {step3_factors}")
 
                     # 用 bl_views 构建资产类别级得分 (供调仓理由生成)
                     step3_asset_views = {}

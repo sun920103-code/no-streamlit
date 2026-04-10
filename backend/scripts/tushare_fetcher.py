@@ -388,9 +388,36 @@ def fetch_macro_economic_indicators(limit: int = 150) -> pd.DataFrame:
         df_m = df_m[['m2_yoy', 'Credit_Impulse']]
         df_m.columns = ['M2_Growth', 'Credit_Impulse']
         
-        # 将三者合并
-        df_macro = pd.concat([df_pmi, df_cpi, df_m], axis=1)
-        df_macro.index = pd.to_datetime(df_macro.index, format='%Y%m')
+        # ── 美国 10 年期国债收益率 (海外环境因子) ──
+        df_us10y = None
+        try:
+            logging.info("[Tushare] 正在拉取海外指标: US 10Y Treasury Yield...")
+            # 拉取近 10 年日频数据
+            us_start = (datetime.today() - timedelta(days=365 * 10 + 60)).strftime('%Y%m%d')
+            us_end = datetime.today().strftime('%Y%m%d')
+            df_us_raw = api.us_tycr(start_date=us_start, end_date=us_end, fields='date,y10')
+            time.sleep(0.5)
+            if df_us_raw is not None and not df_us_raw.empty:
+                df_us_raw['date'] = pd.to_datetime(df_us_raw['date'])
+                df_us_raw = df_us_raw.dropna(subset=['y10']).sort_values('date').set_index('date')
+                df_us_raw['y10'] = pd.to_numeric(df_us_raw['y10'], errors='coerce')
+                # 重采样为月末, 与 PMI/CPI/M2 月频对齐
+                df_us10y = df_us_raw['y10'].resample('ME').last().dropna()
+                df_us10y = df_us10y.to_frame(name='US10Y')
+                # 将 index 对齐到月初 (与其他 Tushare 宏观指标一致)
+                df_us10y.index = df_us10y.index.to_period('M').to_timestamp()
+                logging.info(f"  [Tushare] US 10Y 收益率获取成功: {len(df_us10y)} 个月")
+            else:
+                logging.warning("  [Tushare] US 10Y 收益率数据为空")
+        except Exception as e_us:
+            logging.warning(f"  [Tushare] US 10Y 收益率拉取异常(非致命): {e_us}")
+        
+        # 将所有指标合并
+        merge_list = [df_pmi, df_cpi, df_m]
+        if df_us10y is not None and not df_us10y.empty:
+            merge_list.append(df_us10y)
+        df_macro = pd.concat(merge_list, axis=1)
+        df_macro.index = pd.to_datetime(df_macro.index, format='%Y%m', errors='coerce')
         df_macro = df_macro.sort_index()
         
         # 保存缓存 (将 index 转换为字符串)

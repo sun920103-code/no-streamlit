@@ -1481,10 +1481,10 @@ function formatNumber(n) {
 
 const _STATUS_CSS_MAP = {
   '绩优': 'status-jiyou',
-  '活跃': 'status-huoyue',
+  '良好': 'status-huoyue',
   '平稳': 'status-pingwen',
   '高波动': 'status-gaobodong',
-  '持仓观察': 'status-chicangguancha',
+  '其他': 'status-chicangguancha',
   // 向后兼容英文旧值
   'OUTPERFORM': 'status-jiyou',
   'ACTIVE': 'status-huoyue',
