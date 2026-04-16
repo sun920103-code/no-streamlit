@@ -165,13 +165,12 @@ def get_current_macro_regime_live() -> Dict[str, Any]:
     engine = MarkovMacroEngine(n_components=4)
     result = engine.predict_current_regime(df_zscore[hmm_cols])
     
-    # 进行四象限业务语义打标 (简化的启发式映射)
-    # 根据这一类别的平均 PMI 和 CPI 来推测
-    state_id = result["current_state_id"]
-    state_char = result["state_characteristics"][f"Regime_{state_id}"]
-    
-    z_pmi = state_char.get("PMI", 0.0)
-    z_cpi = state_char.get("CPI_YoY", 0.0)
+    # 进行四象限业务语义打标
+    # [2026-04-16 FIX] 使用最新实际 Z-Score 而非 HMM 聚类中心均值进行象限标定
+    # 原因: HMM 聚类中心是该状态的历史均值, 可能与当前实际数据方向相反
+    # 例: 当前 PMI=-0.72 但此聚簇的历史 PMI 均值 > 0 → 被误标为 overheat
+    z_pmi = latest_zscores.get("PMI", 0.0)
+    z_cpi = latest_zscores.get("CPI_YoY", 0.0)
     
     if z_pmi >= 0 and z_cpi < 0:
         bussiness_regime = "recovery"
