@@ -6,10 +6,16 @@ echo    No Streamlit Quant Platform
 echo ============================================
 echo.
 
-// Start Backend (FastAPI)
-echo [1/2] Starting backend service (FastAPI :8002) ...
-start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlit\backend && ..\.venv\Scripts\uvicorn.exe main:app --reload --port 8002"
+:: Kill any ghost processes on port 8002
+echo [1/2] Cleaning up ghost processes and starting backend service (FastAPI :8002) ...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8002 " ^| findstr "LISTENING"') do (
+    echo Terminating ghost backend process (PID: %%a)...
+    taskkill /F /PID %%a >nul 2>&1
+)
+timeout /t 1 /nobreak >nul
 
+:: Start Backend (FastAPI)
+start "Backend - FastAPI" cmd /k "cd /d d:\No Streamlit\backend && ..\.venv\Scripts\uvicorn.exe main:app --reload --port 8002"
 
 :: Wait for backend to initialize
 timeout /t 4 /nobreak >nul
@@ -26,7 +32,7 @@ echo ============================================
 echo    All services started!
 echo.
 echo    Frontend:  http://localhost:5173
-echo    Backend:   http://localhost:8001/api/docs
+echo    Backend:   http://localhost:8002/api/docs
 echo.
 echo    To exit: just close the two popup command windows
 echo ============================================

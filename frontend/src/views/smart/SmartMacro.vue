@@ -351,7 +351,11 @@
             </div>
             <div class="flex flex-col">
               <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">年化波动率</span>
-              <span class="text-3xl font-bold tracking-tighter text-[#2b3437]">{{ sc.kpi.ann_vol_pct === 'N/A' ? 'N/A' : sc.kpi.ann_vol_pct + '%' }}</span>
+              <span class="text-3xl font-bold tracking-tighter" :class="sc.kpi.vol_anchored && sc.kpi.ann_vol_pct !== 'N/A' && sc.kpi.ann_vol_pct > sc.kpi.target_vol_pct ? 'text-[#f59e0b]' : 'text-[#2b3437]'">{{ sc.kpi.ann_vol_pct === 'N/A' ? 'N/A' : sc.kpi.ann_vol_pct + '%' }}</span>
+              <div v-if="sc.kpi.vol_anchored && sc.kpi.ann_vol_pct !== 'N/A' && sc.kpi.ann_vol_pct > sc.kpi.target_vol_pct" class="mt-1.5 flex items-center gap-1">
+                <span class="material-symbols-outlined text-[#f59e0b] text-xs" data-icon="info">info</span>
+                <span class="text-[9px] text-[#f59e0b] font-bold leading-tight">设定红线 {{ sc.kpi.target_vol_pct }}%｜优化器已锁定理论最小波动率</span>
+              </div>
             </div>
             <div class="flex flex-col">
               <span class="text-[10px] tracking-widest uppercase text-[#737c7f] mb-1">最大回撤</span>

@@ -43,22 +43,31 @@ def _import_backend_service(module_name: str):
     """
     强制按文件路径加载 services 模块, 完全绕过 Python 包缓存。
     优先: backend/services/ → 遗留 20260325/services/ → 标准导入
+    带源文件 mtime 检测: 源文件更新后自动重载, 避免 stale 字节码。
     """
     import importlib.util
 
-    # 已缓存则直接返回
     cache_key = f"services.{module_name}"
-    if cache_key in sys.modules:
-        return sys.modules[cache_key]
 
     # 优先从 backend/services/ 加载
     for search_dir in [BACKEND_DIR, LEGACY_SERVICES_DIR]:
         module_path = os.path.join(search_dir, "services", f"{module_name}.py")
         if os.path.exists(module_path):
+            # mtime 检测: 若源文件已更新则强制重载
+            current_mtime = os.path.getmtime(module_path)
+            cached_mod = sys.modules.get(cache_key)
+            if cached_mod is not None:
+                cached_mtime = getattr(cached_mod, "__source_mtime__", 0)
+                if cached_mtime >= current_mtime:
+                    return cached_mod
+                # 源文件已更新 → 废弃旧缓存
+                del sys.modules[cache_key]
+
             spec = importlib.util.spec_from_file_location(cache_key, module_path)
             mod = importlib.util.module_from_spec(spec)
             sys.modules[cache_key] = mod
             spec.loader.exec_module(mod)
+            mod.__source_mtime__ = current_mtime
             return mod
 
     # 最后兜底: 标准导入
@@ -318,18 +327,22 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         # 进取: 锁定 target_ret × 1.2 的收益率，求最小波动率
         # 稳健: 锁定 target_ret 的收益率，求最小波动率
         # 防守: 锁定 target_ret × 0.8 的收益率，求最小波动率
-        # max_vol 为所有方案共用的硬性红线
+        # max_vol 仅作为稳健配置(基准)的硬性红线
+        # 进取和防守配置仅按预期收益率变化去配置，不以用户的基础波动率做刚性约束
         for scenario_name, ret_adj in [("进取配置", 1.2), ("稳健配置", 1.0), ("防守配置", 0.8)]:
             sc_target_ret = target_ret_decimal * ret_adj
             
-            # 为当前情景独立求解最小波动率权重
+            # 只有稳健配置使用严格边界，进取/防守放开波动率束缚让其能触达收益目标
+            sc_max_vol = max_vol_decimal if "稳健" in scenario_name else 99.0
+            
+            # 为当前情景独立求解权重
             rp_result = _frp.optimize_factor_risk_parity(
                 factor_scores=factor_scores_6,
-                max_volatility=max_vol_decimal,
+                max_volatility=sc_max_vol,
                 target_return=sc_target_ret,
             )
             sc_base_weights = rp_result.get("target_weights", {})
-            sc_estimated_vol = rp_result.get("estimated_volatility", max_vol_decimal)
+            sc_estimated_vol = rp_result.get("estimated_volatility", sc_max_vol)
             sc_estimated_ret = rp_result.get("estimated_return", sc_target_ret)
             sc_risk_conc = rp_result.get("risk_concentration", 0.5)
             
@@ -366,7 +379,9 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
         scenarios.append(scenario)
 
     # ==== [基金资料获取 — Tushare] ====
+    logger.info("[智选] DEBUG-0411: 即将加载 wind_profiles 模块 (此行证明新代码已生效)")
     wind_service = _import_backend_service("wind_profiles")
+    logger.info(f"[智选] DEBUG-0411: wind_profiles 已加载, 文件={getattr(wind_service, '__file__', 'N/A')}")
     all_codes = set()
     for sc in scenarios:
         for alloc in sc["allocations"]:
@@ -383,8 +398,8 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
     if all_codes:
         try:
             from datetime import timedelta
-            import importlib.util, os as _os
-            _ts_path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts", "tushare_fetcher.py")
+            import importlib.util
+            _ts_path = os.path.join(BACKEND_DIR, "scripts", "tushare_fetcher.py")
             _spec = importlib.util.spec_from_file_location("tushare_fetcher", _ts_path)
             _ts_mod = importlib.util.module_from_spec(_spec)
             _spec.loader.exec_module(_ts_mod)
@@ -407,107 +422,61 @@ def _macro_allocation_sync(capital_wan: float, target_ret_pct: float, max_vol_pc
             profile["_amount"] = alloc["amount"]
             sc["profiles"].append(profile)
         
-        # ── 用真实 NAV 数据计算组合级 KPI (覆盖静态估算) ──
+        # ── 用真实 NAV 数据计算组合级 KPI ──
+        # [2026-04-16 20:40 CRITICAL FIX]
+        # ann_return_pct 绝对不能被 Tushare 历史数据覆盖！
+        # 历史实际收益只存入 realized_return_pct，供参考对比。
+        # ann_return_pct 只能由 sidebar 用户输入决定（在下方统一设置）。
         try:
-            # 无论 Wind 是否连通，都调用 compute_portfolio_metrics (内部会平滑 fallback 到 Tushare)
             real_metrics = wind_service.compute_portfolio_metrics(
                 sc["allocations"], period_years=period_years, cached_nav_df=cached_df_nav
             )
                 
             if real_metrics.get("source") in ["wind", "tushare"]:
-                # 必须使用真实 NAV 数据覆盖目标计算年化收益、波动率、最大回撤、夏普比率，使得与战术配置页面的实际测试 KPI 绝对一致！
-                sc["kpi"]["ann_return_pct"] = real_metrics["ann_return_pct"]
+                # 历史实际收益 → 只存 realized_return_pct，绝不碰 ann_return_pct
+                sc["kpi"]["realized_return_pct"] = real_metrics["ann_return_pct"]
+                # 波动率、最大回撤、夏普 → 使用真实历史数据展示
                 sc["kpi"]["ann_vol_pct"] = real_metrics["ann_vol_pct"]
                 sc["kpi"]["max_drawdown_pct"] = real_metrics["max_drawdown_pct"]
                 sc["kpi"]["sharpe"] = real_metrics["sharpe"]
-                sc["kpi"]["_source"] = f"{real_metrics.get('source').upper()}历史波动与收益"
                 sc["kpi"]["_data_points"] = real_metrics.get("data_points", 0)
                 sc["kpi"]["_valid_funds"] = real_metrics.get("valid_funds", 0)
-                logger.info(f"[智选] {sc['name']} KPI 已合并真实历史风险数据: ret={real_metrics['ann_return_pct']}%, vol={real_metrics['ann_vol_pct']}%, dd={real_metrics['max_drawdown_pct']}%")
+                logger.info(f"[智选] {sc['name']} 真实历史: realized_ret={real_metrics['ann_return_pct']}%, vol={real_metrics['ann_vol_pct']}%, dd={real_metrics['max_drawdown_pct']}%")
             else:
-                # API 兜底也失败 → 直接保留 _build_scenario 预先算好的 HRP 理论估算值
-                sc["kpi"]["_source"] = "Tushare / HRP 理论值"
-                logger.info(f"[智选] {sc['name']} 所有外部数据源不可用, KPI 回退并保留为理论模型值")
+                sc["kpi"]["_source"] = "HRP 理论值"
+                logger.info(f"[智选] {sc['name']} 外部数据源不可用, 保留理论模型值")
         except Exception as e:
             sc["kpi"]["ann_vol_pct"] = "N/A"
             sc["kpi"]["max_drawdown_pct"] = "N/A"
             sc["kpi"]["sharpe"] = "N/A"
             sc["kpi"]["_source"] = "unavailable"
-            logger.warning(f"[智选] {sc['name']} 真实 KPI 计算异常, 显示 N/A: {e}")
+            logger.warning(f"[智选] {sc['name']} 真实 KPI 计算异常: {e}")
 
-    # ── 后验波动率约束校验 ──
-    # 即使 can_achieve 在先验模型下通过, 真实 NAV-based KPI 可能暴露出实际波动率超标
-    # 此时必须强制降级为情景 B, 确保前端展示的方案绝不违反用户设定的红线
-    if can_achieve:
-        for sc in scenarios:
-            realized_vol = sc["kpi"].get("ann_vol_pct")
-            if isinstance(realized_vol, (int, float)) and realized_vol > max_vol_pct * 1.0 + 0.01:
-                logger.warning(
-                    f"[智选] 后验降级: {sc['name']} 真实波动率 {realized_vol:.2f}% "
-                    f"超过用户红线 {max_vol_pct:.2f}%, 强制降级为情景B"
-                )
-                can_achieve = False
-                break
-
-    if not can_achieve and len(scenarios) > 1:
-        # 降级: 丢弃所有 3 套方案, 仅保留受约束最大化夏普解
-        logger.info("[智选] 后验降级触发: 重构为情景B (仅 1 套受约束方案)")
-        sc_b = _build_scenario(
-            name="稳健配置 (受约束最大化夏普解)",
-            base_weights=base_rp_result.get("target_weights", {}),
-            target_ret=target_ret_decimal,
-            max_vol=max_vol_decimal,
-            capital=capital_yuan,
-            fund_pool=fund_pool,
-            ret_multiplier=1.0,
-            vol_anchored=True,
-            hrp_estimated_vol=base_vol,
-            hrp_estimated_ret=base_ret,
-            risk_concentration=base_rp_result.get("risk_concentration", 0.5),
-            quadrant=current_q,
-        )
-        # 复用已缓存的 NAV 数据计算 KPI
-        try:
-            real_metrics_b = wind_service.compute_portfolio_metrics(
-                sc_b["allocations"], period_years=period_years, cached_nav_df=cached_df_nav
-            )
-            if real_metrics_b.get("source") in ["wind", "tushare"]:
-                sc_b["kpi"]["ann_return_pct"] = real_metrics_b["ann_return_pct"]
-                sc_b["kpi"]["ann_vol_pct"] = real_metrics_b["ann_vol_pct"]
-                sc_b["kpi"]["max_drawdown_pct"] = real_metrics_b["max_drawdown_pct"]
-                sc_b["kpi"]["sharpe"] = real_metrics_b["sharpe"]
-                sc_b["kpi"]["_source"] = f"{real_metrics_b.get('source').upper()}历史波动与收益"
-        except Exception:
-            pass
-        scenarios = [sc_b]
-
-    # ── 强行绑定视觉规则：让进取和防守的收益率严格遵循稳健基准的 +/- 20% ──
-    # 使用用户侧边栏设定的目标收益率作为稳健排布的基础核心锚点，以保持产品设定的逻辑绝对自洽
+    # ── [2026-04-16 20:40 FINAL BINDING] 预期收益率统一绑定 ──
+    # 这是 ann_return_pct 的唯一赋值点，位于所有 Tushare 覆盖之后，
+    # 确保 ann_return_pct 绝对等于用户 sidebar 输入值，无论上方发生了什么。
     steady_ret = float(target_ret_pct)
-
     for sc in scenarios:
-        raw_historical_ret = sc["kpi"].get("ann_return_pct")
-        if isinstance(raw_historical_ret, (int, float)) and raw_historical_ret is not None:
-            sc["kpi"]["realized_return_pct"] = round(float(raw_historical_ret), 2)
-        elif raw_historical_ret != "N/A":
-            try:
-                sc["kpi"]["realized_return_pct"] = round(float(raw_historical_ret), 2)
-            except:
-                pass
-
-        if sc["name"] == "稳健配置":
+        if "稳健" in sc["name"]:
             sc["kpi"]["ann_return_pct"] = round(steady_ret, 2)
             sc["kpi"]["_source"] = "Sidebar 设定基准"
-        elif sc["name"] == "进取配置":
+        elif "进取" in sc["name"]:
             sc["kpi"]["ann_return_pct"] = round(steady_ret * 1.2, 2)
             sc["kpi"]["_source"] = "Sidebar 基准上浮 +20%"
-        elif sc["name"] == "防守配置":
+        elif "防守" in sc["name"]:
             sc["kpi"]["ann_return_pct"] = round(steady_ret * 0.8, 2)
             sc["kpi"]["_source"] = "Sidebar 基准下调 -20%"
+    
+    # 情景B时，注入 vol_anchored 标志供前端显示波动率超标提示
+    if not can_achieve:
+        for sc in scenarios:
+            sc["kpi"]["vol_anchored"] = True
+            sc["kpi"]["target_vol_pct"] = round(max_vol_pct, 2)
 
     return {
         "status": "success",
         "scenario_type": "A" if can_achieve else "B",
+        "_code_version": "2026-04-16T20:42-FINAL-BINDING",
         "edb_data": {
             "market_state": scores.get("market_state", "N/A"),
             "composite_score": round(_composite, 3),
@@ -681,18 +650,8 @@ def _load_or_build_cov_matrix(fund_codes: list) -> dict:
 
     # 3. 从 Tushare 构建 (缓存过期或不存在时)
     try:
-        import importlib.util, os as _os
-        _tushare_path = _os.path.join(
-            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-            "..", "scripts", "tushare_fetcher.py"
-        )
-        _tushare_path = _os.path.normpath(_tushare_path)
-        if not _os.path.exists(_tushare_path):
-            _tushare_path = _os.path.join(
-                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
-                "scripts", "tushare_fetcher.py"
-            )
-            _tushare_path = _os.path.normpath(_tushare_path)
+        import importlib.util
+        _tushare_path = os.path.join(BACKEND_DIR, "scripts", "tushare_fetcher.py")
         _spec = importlib.util.spec_from_file_location("tushare_fetcher_cov", _tushare_path)
         _ts_mod = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_ts_mod)

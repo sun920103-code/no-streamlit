@@ -106,18 +106,7 @@ def get_wind_fund_profiles(fund_codes: list) -> dict:
             mgr_name = fmt_str(meta_row.get("FUND_FUNDMANAGER", "暂无"))
             setup_date = fmt_str(meta_row.get("FUND_FUNDMANAGER_STARTDATE", "暂无"))
 
-        # Wind 增强: 覆盖缺失字段 (基金规模/成立日期/基金经理)
-        if code in wind_basic:
-            wb = wind_basic[code]
-            if sec_name == "暂无":
-                sec_name = fmt_str(wb.get("sec_name", "暂无"))
-            if mgr_name == "暂无":
-                mgr_name = fmt_str(wb.get("fund_fundmanager", "暂无"))
-            if setup_date == "暂无":
-                setup_date = fmt_date(wb.get("fund_setupdate", "暂无"))
-            scale_val = wb.get("prt_fundnetasset_total")
-            if scale_val is not None and not pd.isna(scale_val):
-                scale_str = fmt_num(float(scale_val) / 1e8, 2, "亿")
+        # [2026-04-11] Wind 增强已移除 — 纯 Tushare 路径
 
         # Parse Performance from NAV
         navytd = nav1y = nav3y = vol = maxdd = sharpe = None

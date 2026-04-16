@@ -91,7 +91,7 @@ def _load_asset_priors() -> dict:
             source = "wind"
             updated_at = priors.get("updated_at", "unknown")
             
-            print(f"[FactorRP] ✅ 已加载 Wind 资产先验 (更新于 {updated_at})")
+            print(f"[FactorRP] OK: 已加载资产先验 (更新于 {updated_at})")
             
             return {
                 "correlation_matrix": correlation_matrix,
@@ -100,9 +100,9 @@ def _load_asset_priors() -> dict:
                 "source": source,
             }
         except Exception as e:
-            print(f"[FactorRP] ⚠️ 加载 asset_priors.json 失败: {e}, 使用默认值")
+            print(f"[FactorRP] WARN: 加载 asset_priors.json 失败: {e}, 使用默认值")
     else:
-        print(f"[FactorRP] ℹ️ 未找到 asset_priors.json, 使用硬编码默认值")
+        print(f"[FactorRP] INFO: 未找到 asset_priors.json, 使用硬编码默认值")
     
     return {
         "correlation_matrix": _DEFAULT_CORRELATION,
