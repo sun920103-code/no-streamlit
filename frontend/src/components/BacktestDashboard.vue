@@ -12,7 +12,7 @@
               class="px-8 h-10 bg-[#001529] rounded-lg shadow-md transition-all active:scale-[0.98] hover:shadow-lg hover:brightness-110 flex items-center justify-center disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span v-if="btnLoading" class="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin mr-2"></span>
-              <span class="text-white text-sm font-bold tracking-widest">一键历史业绩回测</span>
+              <span class="text-white text-sm font-bold tracking-widest">一键历史全量回测</span>
             </button>
           </div>
         </div>
@@ -27,7 +27,7 @@
         <div class="px-6 py-4 bg-[#dfe3e7] flex justify-between items-center">
           <h3 class="text-sm font-bold text-[#001d53] uppercase tracking-widest">策略绩效对比矩阵</h3>
           <div class="flex items-center gap-2">
-            <span class="text-[10px] font-bold text-slate-500 uppercase">Auto-refresh in 12s</span>
+            <span class="text-[10px] font-bold text-slate-500 uppercase">AUTO-REFRESH IN 12S</span>
             <div class="w-2 h-2 rounded-full bg-[#00b47d] animate-pulse"></div>
           </div>
         </div>
@@ -83,8 +83,29 @@
         </div>
       </div>
 
+      <!-- Data Provenance Bar — proves real data was used -->
+      <div v-if="meta" class="mb-6 px-5 py-3 bg-[#f0f4f8] rounded-lg border border-[#c4c6cf]/20 flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px] font-mono text-slate-500">
+        <span class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          <b class="text-slate-700 uppercase">Live Data</b>
+        </span>
+        <span>数据源: <b class="text-slate-700">{{ meta.data_source }}</b></span>
+        <span>区间: <b class="text-slate-700">{{ meta.date_range_start }}</b> ~ <b class="text-slate-700">{{ meta.date_range_end }}</b></span>
+        <span>基金: <b class="text-slate-700">{{ meta.fund_count }}</b> 只</span>
+        <span>交易日: <b class="text-slate-700">{{ meta.trading_days }}</b> 天</span>
+        <span>策略: <b class="text-slate-700">{{ meta.strategy_count }}</b> 组</span>
+        <span>基准: <b class="text-slate-700">{{ meta.benchmark_count }}</b> 个</span>
+        <span>耗时: <b class="text-slate-700">{{ meta.elapsed_ms }}ms</b></span>
+      </div>
+
       <!-- ECharts Backtest Bar Chart -->
-      <div v-show="timeseries && timeseries.dates" style="width: 100%; height: 450px;" ref="chartContainer"></div>
+      <div v-if="timeseries && timeseries.dates">
+        <div class="px-4 py-3 mb-2 flex items-center gap-2">
+          <span class="material-symbols-outlined text-[#001d53] text-lg">bar_chart</span>
+          <span class="text-sm font-bold text-[#001d53] uppercase tracking-widest">历年配置策略年化回报表现</span>
+        </div>
+        <div style="width: 100%; height: 450px;" ref="chartContainer"></div>
+      </div>
     </div>
 
     <!-- ── 全屏加载态 (Wind 终端直连) ── -->
@@ -103,10 +124,11 @@
           <span class="material-symbols-outlined text-4xl text-[#001529] z-10">satellite_alt</span>
         </div>
 
-        <h3 class="text-xl font-bold text-[#001529] mb-3 tracking-wide">直连 Wind 金融终端</h3>
+        <h3 class="text-xl font-bold text-[#001529] mb-3 tracking-wide">历史全量回测引擎</h3>
         <p class="text-slate-500 text-sm font-medium text-center leading-relaxed">
-          正在触发同步过去 5 年的历史行情数据<br/>
-          <span class="text-blue-600 font-semibold animate-pulse block mt-2">请稍候，系统正在通过子进程调取数据...</span>
+          正在读取本地同步的历史净值数据<br/>
+          计算多策略 KPI 指标与年度收益...<br/>
+          <span class="text-blue-600 font-semibold animate-pulse block mt-2">{{ loadingStage }}</span>
         </p>
       </div>
     </div>
@@ -126,9 +148,11 @@ const props = defineProps({
 
 const kpiList = ref([])
 const timeseries = ref(null)
+const meta = ref(null)
 const chartContainer = ref(null)
 const isLoading = ref(false)
 const btnLoading = ref(false)
+const loadingStage = ref('初始化回测引擎...')
 let chartInstance = null
 
 // 暴露 refreshChart 供父组件在 v-show 切换后调用
@@ -138,18 +162,6 @@ function refreshChart() {
   }
 }
 defineExpose({ refreshChart })
-
-function getRowBg(label) {
-  if (label.includes('客户持仓')) return 'rgba(239, 68, 68, 0.05)'
-  if (label.includes('基准')) return 'rgba(107, 114, 128, 0.05)'
-  return 'transparent'
-}
-
-function getAmountColor(val) {
-  if (val > 0) return '#EF4444';
-  if (val < 0) return '#10B981';
-  return '#43474d';
-}
 
 function getReturnTextClass(val) {
   if (val > 0) return 'text-[#ba1a1a]';
@@ -173,9 +185,25 @@ async function handleBacktestClick() {
   
   btnLoading.value = true;
   isLoading.value = true;
+  loadingStage.value = '加载历史净值数据 (sync_*.csv)...'
+  meta.value = null;
+  
+  // 动态更新 loading 文案，让用户知道系统在实时工作
+  const stages = [
+    { delay: 400, text: '正在解析 14 只基金历史净值...' },
+    { delay: 900, text: '计算组合日收益率与风险指标...' },
+    { delay: 1500, text: '比对 6 大市场基准指数...' },
+    { delay: 2200, text: '生成策略 KPI 矩阵与年度收益...' },
+  ];
+  const stageTimers = stages.map(s =>
+    setTimeout(() => { if (isLoading.value) loadingStage.value = s.text }, s.delay)
+  );
+
+  // 保证 loading 至少展示 1.2 秒，让用户确信系统在运行
+  const minLoadingPromise = new Promise(r => setTimeout(r, 1200));
   
   try {
-    const res = await calculateKpis(req);
+    const [res] = await Promise.all([calculateKpis(req), minLoadingPromise]);
     
     // Sanitize emojis from labels
     const sanitizedKpis = res.data.kpi_list.map(k => ({
@@ -194,6 +222,7 @@ async function handleBacktestClick() {
 
     kpiList.value = sanitizedKpis;
     timeseries.value = res.data.timeseries;
+    meta.value = res.data.meta || null;
     
     await nextTick();
     renderChart();
@@ -203,6 +232,7 @@ async function handleBacktestClick() {
     if (typeof errorMsg === 'object') errorMsg = JSON.stringify(errorMsg, null, 2);
     alert(`请求失败:\n${errorMsg}`);
   } finally {
+    stageTimers.forEach(t => clearTimeout(t));
     isLoading.value = false;
     btnLoading.value = false;
   }
@@ -251,17 +281,13 @@ function renderChart() {
   });
 
   const option = {
-    title: {
-      text: '历年配置策略年化回报表现',
-      textStyle: { fontSize: 14, color: '#475569', fontWeight: 600 }
-    },
     tooltip: { 
       trigger: 'axis', 
       axisPointer: { type: 'shadow' },
       valueFormatter: (val) => val.toFixed(2) + '%' 
     },
-    legend: { top: 30, type: 'scroll' },
-    grid: { left: '3%', right: '4%', bottom: '3%', top: 80, containLabel: true },
+    legend: { top: 0, type: 'scroll' },
+    grid: { left: '3%', right: '4%', bottom: '3%', top: 50, containLabel: true },
     xAxis: { 
       type: 'category', 
       data: ts.dates,

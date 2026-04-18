@@ -403,9 +403,11 @@ async def calculate_kpis_endpoint(payload: KpiRequest):
     """
     try:
         from services.backtester import FOFBacktester
-        import os
+        import os, time
         import pandas as pd
         import numpy as np
+        
+        _t0 = time.perf_counter()
         
         backend_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         data_dir = os.path.join(backend_dir, "data")
@@ -608,7 +610,21 @@ async def calculate_kpis_endpoint(payload: KpiRequest):
         # 将基准排在前面，更符合常规展示 UI
         kpi_results = bm_kpi_results + kpi_results
 
-        return {"status": "success", "kpi_list": kpi_results, "timeseries": chart_lines}
+        _elapsed_ms = round((time.perf_counter() - _t0) * 1000)
+        _meta = {
+            "data_source": csv_files[0],
+            "date_range_start": str(df_funds_ret.index.min().date()) if not df_funds_ret.empty else None,
+            "date_range_end": str(df_funds_ret.index.max().date()) if not df_funds_ret.empty else None,
+            "fund_count": len(df_funds_ret.columns),
+            "trading_days": len(df_funds_ret),
+            "benchmark_count": len(valid_benchmark_codes),
+            "strategy_count": len(payload.strategies),
+            "elapsed_ms": _elapsed_ms,
+        }
+        logger.info(f"[KPI] 回测完成: {_meta['fund_count']} 只基金, {_meta['trading_days']} 交易日, "
+                     f"{_meta['strategy_count']} 策略 + {_meta['benchmark_count']} 基准, 耗时 {_elapsed_ms}ms")
+
+        return {"status": "success", "kpi_list": kpi_results, "timeseries": chart_lines, "meta": _meta}
         
     except Exception as e:
         import traceback

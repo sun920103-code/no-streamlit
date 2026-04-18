@@ -273,8 +273,16 @@
                         {{ avgMonthlyPl > 0 ? '+' : '' }}{{ avgMonthlyPl.toFixed(2) }}%
                       </div>
                     </td>
-                    <td></td>
-                    <td></td>
+                    <td style="text-align:right;">
+                      <div :style="{ color: portfolioRetYtd >= 0 ? '#DC2626' : '#00E676', fontSize: '14px', fontWeight: 700, fontFamily: '\'JetBrains Mono\',monospace' }">
+                        {{ portfolioRetYtd !== null ? ((portfolioRetYtd > 0 ? '+' : '') + portfolioRetYtd.toFixed(2) + '%') : '—' }}
+                      </div>
+                    </td>
+                    <td style="text-align:right;">
+                      <div :style="{ color: portfolioRet1Y >= 0 ? '#DC2626' : '#00E676', fontSize: '14px', fontWeight: 700, fontFamily: '\'JetBrains Mono\',monospace' }">
+                        {{ portfolioRet1Y !== null ? ((portfolioRet1Y > 0 ? '+' : '') + portfolioRet1Y.toFixed(2) + '%') : '—' }}
+                      </div>
+                    </td>
                     <td style="text-align:right;">
                       <div style="font-size:14px;font-weight:700;color:#334155;">{{ avgVolatility.toFixed(1) }}%</div>
                     </td>
@@ -1004,7 +1012,9 @@ function onEgarchRef(el, key, data) {
   const observer = new ResizeObserver((entries) => {
     for (const entry of entries) {
       if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
-        initEgarchChart(el, key, data)
+        // 🔧 Fix: Read fresh data from rebalResult instead of stale closure
+        const freshData = rebalResult.value?.egarch?.[key] || data
+        initEgarchChart(el, key, freshData)
       }
     }
   })
@@ -1043,6 +1053,25 @@ onUpdated(() => {
     renderRebalCharts(rebalResult.value)
   }
 })
+
+// 🔧 Fix: Reliable EGARCH chart initialization via deep watcher on rebalResult.egarch
+// Solves race condition where :ref callback fires before layout is ready
+watch(() => rebalResult.value?.egarch, (egarchData) => {
+  if (!egarchData) return
+  // Wait for Vue to finish rendering the v-for elements
+  nextTick(() => {
+    // Small delay ensures CSS layout is complete (grid columns computed)
+    setTimeout(() => {
+      for (const [key, data] of Object.entries(egarchData)) {
+        if (data.bypassed) continue
+        if (egarchInitialized[key]) continue
+        const el = egarchRefs[key]
+        if (!el) continue
+        initEgarchChart(el, key, data)
+      }
+    }, 120)
+  })
+}, { deep: true })
 
 function renderRebalCharts(result) {
   // Radar charts are now SVG-based (no ECharts needed)
@@ -1473,6 +1502,34 @@ const avgVolatility = computed(() => {
     totalW += w
   })
   return totalW > 0 ? weightedVol / totalW : 0
+})
+
+const portfolioRetYtd = computed(() => {
+  if (holdings.value.length === 0) return null
+  let totalW = 0, weightedRet = 0
+  holdings.value.forEach(h => {
+    const ret = fundEnhanced.value[h.code]?.ret_ytd
+    const w = h.proportion || 0
+    if (ret != null && w > 0) {
+      weightedRet += ret * w
+      totalW += w
+    }
+  })
+  return totalW > 0 ? weightedRet / totalW : null
+})
+
+const portfolioRet1Y = computed(() => {
+  if (holdings.value.length === 0) return null
+  let totalW = 0, weightedRet = 0
+  holdings.value.forEach(h => {
+    const ret = fundEnhanced.value[h.code]?.ret_1y
+    const w = h.proportion || 0
+    if (ret != null && w > 0) {
+      weightedRet += ret * w
+      totalW += w
+    }
+  })
+  return totalW > 0 ? weightedRet / totalW : null
 })
 
 function formatNumber(n) {
