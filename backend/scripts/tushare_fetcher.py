@@ -752,7 +752,8 @@ def fetch_ppi(limit: int = 150) -> pd.DataFrame:
 def fetch_realtime_index(index_codes: list) -> list:
     """
     获取指数实时行情 (替代 Wind w.wsq).
-    使用 Tushare rt_idx_k 接口。
+    主路径: Tushare rt_idx_k 实时接口。
+    备用路径: Tushare index_daily 日线接口 (取最近交易日收盘价)。
 
     :param index_codes: 指数代码列表 (Wind 格式如 ['000001.SH', '000300.SH'])
     :return: [{'code': '000001.SH', 'close': 3200.5, 'pct_chg': 1.23, 'pre_close': 3161.6}, ...]
@@ -760,11 +761,13 @@ def fetch_realtime_index(index_codes: list) -> list:
     api = _get_api()
     results = []
 
-    # 批量获取: rt_idx_k 支持逗号分隔多个代码
     # 过滤掉非 A 股指数 (如 HSI.HI)
     a_codes = [c for c in index_codes if c.endswith('.SH') or c.endswith('.SZ')]
     hk_codes = [c for c in index_codes if c not in a_codes]
 
+    rt_success = False
+
+    # ── 主路径: rt_idx_k 实时行情 ──
     if a_codes:
         try:
             codes_str = ','.join(a_codes)
@@ -786,9 +789,45 @@ def fetch_realtime_index(index_codes: list) -> list:
                         'pct_chg': pct,
                         'pre_close': round(float(pre_close), 2) if pre_close is not None else None,
                     })
+                rt_success = len(results) > 0
                 logging.info(f"  [Tushare] rt_idx_k 实时行情: {len(results)} 个指数")
         except Exception as e:
-            logging.warning(f"  [Tushare] rt_idx_k 异常: {e}")
+            logging.warning(f"  [Tushare] rt_idx_k 异常 (将回退到 index_daily): {e}")
+
+    # ── 备用路径: index_daily 最近交易日收盘价 ──
+    if not rt_success and a_codes:
+        logging.info("  [Tushare] 回退到 index_daily 获取最近交易日行情...")
+        results = []  # 清空可能的残留
+        end_date = datetime.today().strftime('%Y%m%d')
+        start_date = (datetime.today() - timedelta(days=15)).strftime('%Y%m%d')
+
+        for code in a_codes:
+            try:
+                df = api.index_daily(
+                    ts_code=code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    fields='trade_date,ts_code,close,pre_close,pct_chg'
+                )
+                if df is not None and not df.empty:
+                    df = df.sort_values('trade_date', ascending=False)
+                    latest = df.iloc[0]
+                    results.append({
+                        'code': code,
+                        'close': round(float(latest['close']), 2) if pd.notna(latest['close']) else None,
+                        'pct_chg': round(float(latest['pct_chg']), 2) if pd.notna(latest['pct_chg']) else None,
+                        'pre_close': round(float(latest['pre_close']), 2) if pd.notna(latest['pre_close']) else None,
+                    })
+                else:
+                    results.append({'code': code, 'close': None, 'pct_chg': None, 'pre_close': None})
+                time.sleep(0.12)
+            except Exception as e:
+                logging.warning(f"  [Tushare] index_daily {code} 异常: {e}")
+                results.append({'code': code, 'close': None, 'pct_chg': None, 'pre_close': None})
+                time.sleep(0.3)
+
+        n_valid = sum(1 for r in results if r['close'] is not None)
+        logging.info(f"  [Tushare] index_daily 回退行情: {n_valid}/{len(results)} 个指数有数据")
 
     # 港股指数暂用空占位
     for hk in hk_codes:

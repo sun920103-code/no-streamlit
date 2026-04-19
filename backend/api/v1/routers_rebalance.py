@@ -191,6 +191,7 @@ def _asset_views_to_fund_weights(
       5. 归一化到 sum=1
     """
     n = max(len(bare_codes), 1)
+    max_single = 3.0 / n  # 单只基金最大权重上限 = 3 倍等权 (防止极端集中)
     raw = {}
     for code in bare_codes:
         # ✅ 基于原始持仓做偏离 (而非等权)
@@ -200,7 +201,7 @@ def _asset_views_to_fund_weights(
         view = score * 0.15
         confidence = min(0.90, 0.5 + abs(score) * 0.35)
         offset = view * confidence * amplifier
-        raw[code] = max(0.001, base_w + offset)
+        raw[code] = min(max_single, max(0.001, base_w + offset))
     total = sum(raw.values())
     if total > 1e-8:
         return {k: v / total for k, v in raw.items()}
@@ -791,33 +792,127 @@ def _run_pipeline_sync(
             if has_report:
                 all_weight_sets.append(("report", "研报调仓", step3_weights))
 
+            baseline_w_arr = None  # Track baseline weights for duplicate detection
+
             for key, label, w_dict in all_weight_sets:
                 try:
                     common = [c for c in w_dict if c in nav_df.columns]
                     if not common or len(nav_df) < 30:
+                        egarch_data[key] = {"label": label, "bypassed": True, "reason": "NAV 数据不足"}
                         continue
                     w_arr = np.array([w_dict.get(c, 0) for c in common])
                     w_sum = w_arr.sum()
                     if w_sum > 0:
                         w_arr = w_arr / w_sum
+
+                    # ── 重复权重检测: 跳过与底仓一致的配置 ──
+                    if key == "baseline":
+                        baseline_w_arr = w_arr.copy()
+                    elif baseline_w_arr is not None and len(w_arr) == len(baseline_w_arr):
+                        max_dev = float(np.max(np.abs(w_arr - baseline_w_arr)))
+                        if max_dev < 0.01:  # < 1% 最大权重偏差 → 条件波动率与底仓数学上一致
+                            egarch_data[key] = {
+                                "label": label,
+                                "bypassed": True,
+                                "reason": f"调仓权重与底仓偏差过小 (最大仅 {max_dev*100:.2f}%)，条件波动率与底仓一致",
+                            }
+                            log_fn(f"⏭️ {label} EGARCH 跳过: 权重与底仓最大偏差仅 {max_dev*100:.2f}%")
+                            continue
+                        else:
+                            log_fn(f"📊 {label} 权重偏差: 最大 {max_dev*100:.1f}%")
+
                     rets = nav_df[common].pct_change().dropna()
                     port_ret = (rets * w_arr).sum(axis=1)
 
-                    # EGARCH 拟合
                     from arch import arch_model
                     scaled = port_ret * 100
                     if scaled.var() < 1e-8:
                         egarch_data[key] = {"label": label, "bypassed": True, "reason": "波动率不足"}
                         continue
 
-                    model = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, o=1, q=1, dist='skewt', rescale=False)
-                    res = model.fit(disp='off')
-                    cond_vol = res.conditional_volatility / 100
-                    # Filter out NaT values from index to prevent NaTType strftime error
+                    # ────────────────────────────────────────────────
+                    # 三层模型回退: EGARCH → GARCH(1,1) → 滚动波动率
+                    # 每层都包含 拟合后验证 (gamma 范围 + 条件波动率正定性)
+                    # ────────────────────────────────────────────────
+                    accepted_res = None
+                    fit_model_type = None
+                    fit_dist = None
+                    gamma_val = 0.0
+
+                    def _validate_fit(result, model_name):
+                        """验证模型拟合质量: gamma ∈ [-5, 5], 条件波动率全为正"""
+                        cv = result.conditional_volatility
+                        if cv is None or len(cv) == 0:
+                            return False, "条件波动率为空"
+                        if cv.min() <= 0:
+                            return False, f"条件波动率含非正值 (min={cv.min():.4f})"
+                        cv_median = float(cv.median())
+                        if cv_median > 0 and float(cv.max()) / cv_median > 50:
+                            return False, f"条件波动率异常跳跃 (max/median={float(cv.max())/cv_median:.0f})"
+                        gk = [k for k in result.params.index if 'gamma' in k.lower()]
+                        gv = float(result.params[gk[0]]) if gk else 0.0
+                        if abs(gv) > 5.0:
+                            return False, f"γ={gv:.2f} 超出合理范围 [-5, 5]"
+                        return True, gv
+
+                    # Level 1: EGARCH(1,1,1) — 多分布尝试，含拟合后验证
+                    for dist_name in ['skewt', 'studentst', 'normal']:
+                        try:
+                            _m = arch_model(scaled, mean='Constant', vol='EGARCH', p=1, o=1, q=1, dist=dist_name)
+                            _r = _m.fit(disp='off', options={'maxiter': 500})
+                            ok, info = _validate_fit(_r, f"EGARCH({dist_name})")
+                            if not ok:
+                                log_fn(f"  ⚠️ {label} EGARCH({dist_name}) 拟合退化: {info}")
+                                continue
+                            accepted_res = _r
+                            fit_dist = dist_name
+                            fit_model_type = "EGARCH"
+                            gamma_val = float(info)  # _validate_fit returns gamma as info when ok
+                            break
+                        except Exception:
+                            continue
+
+                    # Level 2: GARCH(1,1) — 无非对称项, 更鲁棒
+                    if accepted_res is None:
+                        log_fn(f"  🔄 {label} EGARCH 拟合失败/退化, 降级为 GARCH(1,1)...")
+                        for dist_name in ['studentst', 'normal']:
+                            try:
+                                _m = arch_model(scaled, mean='Constant', vol='GARCH', p=1, q=1, dist=dist_name)
+                                _r = _m.fit(disp='off', options={'maxiter': 500})
+                                cv = _r.conditional_volatility
+                                if cv is None or len(cv) == 0 or cv.min() <= 0:
+                                    continue
+                                accepted_res = _r
+                                fit_dist = dist_name
+                                fit_model_type = "GARCH"
+                                gamma_val = 0.0  # GARCH 无非对称参数
+                                break
+                            except Exception:
+                                continue
+
+                    # Level 3: 滚动波动率 — 非参数方法, 始终可用
+                    if accepted_res is None:
+                        log_fn(f"  🔄 {label} 参数模型均失败, 降级为 20 日滚动波动率...")
+                        roll_vol = port_ret.rolling(window=20, min_periods=10).std().dropna()
+                        roll_vol = roll_vol[roll_vol.index.notna()]
+                        if len(roll_vol) > 0:
+                            egarch_data[key] = {
+                                "label": label,
+                                "bypassed": False,
+                                "dates": [d.strftime("%Y-%m-%d") for d in roll_vol.index],
+                                "values": [round(float(v), 6) for v in roll_vol.values],
+                                "mean_vol": round(float(roll_vol.mean()), 6),
+                                "gamma": 0.0,
+                                "asymmetry": "滚动波动率 (非参数)",
+                            }
+                            log_fn(f"📈 {label} 滚动波动率计算成功 (20 日窗口)")
+                        else:
+                            egarch_data[key] = {"label": label, "bypassed": True, "reason": "数据不足以计算波动率"}
+                        continue
+
+                    # ── 参数模型拟合成功, 提取条件波动率 ──
+                    cond_vol = accepted_res.conditional_volatility / 100
                     cond_vol = cond_vol[cond_vol.index.notna()].dropna()
-                    
-                    gamma_keys = [k for k in res.params.index if 'gamma' in k.lower()]
-                    gamma_val = float(res.params[gamma_keys[0]]) if gamma_keys else 0.0
 
                     egarch_data[key] = {
                         "label": label,
@@ -826,12 +921,13 @@ def _run_pipeline_sync(
                         "values": [round(float(v), 6) for v in cond_vol.values],
                         "mean_vol": round(float(cond_vol.mean()), 6),
                         "gamma": round(gamma_val, 4),
-                        "asymmetry": "负面冲击放大" if gamma_val < -0.03 else "冲击基本对称",
+                        "asymmetry": ("负面冲击放大" if gamma_val < -0.03 else "冲击基本对称") if fit_model_type == "EGARCH" else f"{fit_model_type} 拟合",
                     }
+                    log_fn(f"📈 {label} {fit_model_type} 拟合成功 (dist={fit_dist}, γ={gamma_val:.4f})")
                 except Exception as e_eg:
-                    import traceback
+                    import traceback as _tb
                     egarch_data[key] = {"label": label, "bypassed": True, "reason": str(e_eg)[:60]}
-                    log_fn(f"EGARCH Detail Error: {traceback.format_exc()}")
+                    log_fn(f"EGARCH Detail Error ({label}): {_tb.format_exc()}")
             log_fn(f"✅ EGARCH 计算完成 ({len(egarch_data)} 个配置)")
         except Exception as e_all:
             log_fn(f"⚠️ EGARCH 计算异常: {str(e_all)[:60]}")

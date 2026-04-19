@@ -877,7 +877,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, onUpdated } from 'vue'
+import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import api, { uploadHoldings, optimizeHrp, getRebalanceInstructions, extractNewsViews, extractReportViews, optimizeBl, getMacroQuadrant, optimizeMbl, optimizeFactorRp, generatedApi } from '../api'
 import AsyncButton from '../components/common/AsyncButton.vue'
@@ -892,9 +892,17 @@ const currentStep = ref(0) // 0: upload, 1: mapping, 2: hrp
 const hrpResultTable = ref(null)
 
 // 切回回测页时刷新图表尺寸 (v-show 隐藏后 echarts 宽度为 0)
-watch(activePage, (newVal) => {
+// 🔧 关键修复: 切回 AI 研判调仓页 (page 1) 时重建 EGARCH 图表
+watch(activePage, (newVal, oldVal) => {
   if (newVal === 2 && backtestRef.value) {
     backtestRef.value.refreshChart()
+  }
+  // 🔧 当切换回 page 1 (AI 研判调仓) 时,
+  // v-if 会重建 DOM, 必须重置所有初始化状态并重新渲染
+  if (newVal === 1 && rebalResult.value?.egarch) {
+    _resetEgarchState()
+    // 等待 Vue v-if 重新渲染完成后启动图表初始化
+    nextTick(() => _scheduleEgarchInit())
   }
 })
 
@@ -952,15 +960,37 @@ function getTextAnchor(idx, total) {
 // Track which EGARCH/PCA charts have been initialized to avoid duplicate init
 const egarchInitialized = reactive({})
 const pcaInitialized = reactive({})
-// Keep track of ResizeObservers for cleanup
-const egarchObservers = reactive({})
+let _egarchPollTimer = null // Polling timer handle for EGARCH init
 
-// ── Robust EGARCH chart initialization via ref callback ──
+// ── Reset all EGARCH tracking state (call before re-rendering) ──
+function _resetEgarchState() {
+  // Cancel any pending polling
+  if (_egarchPollTimer) {
+    clearTimeout(_egarchPollTimer)
+    _egarchPollTimer = null
+  }
+  // Dispose existing ECharts instances
+  Object.keys(egarchRefs).forEach(k => {
+    if (egarchRefs[k]) {
+      const inst = echarts.getInstanceByDom(egarchRefs[k])
+      if (inst) inst.dispose()
+    }
+    delete egarchRefs[k]
+  })
+  // Clear initialized flags
+  Object.keys(egarchInitialized).forEach(k => delete egarchInitialized[k])
+}
+
+// ── Core EGARCH chart initialization (single element) ──
 function initEgarchChart(el, key, data) {
   if (!el || !data || data.bypassed) return false
   if (egarchInitialized[key]) return true
-  // Element must have actual layout dimensions
+  // Element must have actual CSS layout dimensions
   if (el.offsetWidth === 0 || el.offsetHeight === 0) return false
+  
+  // Dispose any pre-existing instance on this DOM element
+  const existing = echarts.getInstanceByDom(el)
+  if (existing) existing.dispose()
   
   const chart = echarts.init(el)
   chart.setOption({
@@ -982,52 +1012,63 @@ function initEgarchChart(el, key, data) {
     }]
   })
   egarchInitialized[key] = true
-  // Disconnect observer if one exists
-  if (egarchObservers[key]) {
-    egarchObservers[key].disconnect()
-    delete egarchObservers[key]
-  }
   return true
 }
 
+// ── Polling-based EGARCH initialization ──
+// Retries until all charts are initialized or timeout (3s)
+// This replaces the fragile ResizeObserver + onUpdated + deep watcher approach
+function _scheduleEgarchInit() {
+  if (_egarchPollTimer) clearTimeout(_egarchPollTimer)
+  const startTime = Date.now()
+  const MAX_WAIT = 3000 // 3 second timeout
+  
+  function _poll() {
+    const egarchData = rebalResult.value?.egarch
+    if (!egarchData) return // No data, stop polling
+    
+    let allDone = true
+    for (const [key, data] of Object.entries(egarchData)) {
+      if (data.bypassed) continue
+      if (egarchInitialized[key]) continue
+      
+      allDone = false
+      const el = egarchRefs[key]
+      if (el) initEgarchChart(el, key, data)
+    }
+    
+    // Keep polling if not all done and within timeout
+    if (!allDone && (Date.now() - startTime) < MAX_WAIT) {
+      _egarchPollTimer = setTimeout(_poll, 80)
+    } else {
+      _egarchPollTimer = null
+    }
+  }
+  
+  _poll()
+}
+
+// ── ref callback for EGARCH chart containers ──
 function onEgarchRef(el, key, data) {
   if (!el) {
-    // Element unmounted — clean up
+    // Element unmounted — clean up ref
     egarchRefs[key] = null
-    if (egarchObservers[key]) {
-      egarchObservers[key].disconnect()
-      delete egarchObservers[key]
-    }
     return
   }
   egarchRefs[key] = el
-  
-  // Attempt immediate initialization
-  if (initEgarchChart(el, key, data)) return
-  
-  // Element exists but has no dimensions yet — use ResizeObserver to wait for layout
-  if (egarchObservers[key]) {
-    egarchObservers[key].disconnect()
+  // Attempt immediate init (may succeed if CSS layout is ready)
+  if (!egarchInitialized[key]) {
+    const freshData = rebalResult.value?.egarch?.[key] || data
+    initEgarchChart(el, key, freshData)
   }
-  const observer = new ResizeObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.contentRect.width > 0 && entry.contentRect.height > 0) {
-        // 🔧 Fix: Read fresh data from rebalResult instead of stale closure
-        const freshData = rebalResult.value?.egarch?.[key] || data
-        initEgarchChart(el, key, freshData)
-      }
-    }
-  })
-  observer.observe(el)
-  egarchObservers[key] = observer
 }
 
 // ── Cleanup on component unmount ──
 onUnmounted(() => {
-  Object.keys(egarchObservers).forEach(k => {
-    egarchObservers[k]?.disconnect()
-    delete egarchObservers[k]
-  })
+  if (_egarchPollTimer) {
+    clearTimeout(_egarchPollTimer)
+    _egarchPollTimer = null
+  }
   Object.keys(egarchRefs).forEach(k => {
     if (egarchRefs[k]) {
       const inst = echarts.getInstanceByDom(egarchRefs[k])
@@ -1036,57 +1077,23 @@ onUnmounted(() => {
   })
 })
 
+// ── Single unified watcher for rebalResult ──
+// Handles both initial load and data changes
 watch(rebalResult, async (val) => {
   if (!val) return
+  // Reset EGARCH state for fresh render
+  _resetEgarchState()
   await nextTick()
-  // Allow DOM to mount
+  // Start polling-based initialization
+  _scheduleEgarchInit()
+  // Also render PCA charts via renderRebalCharts
   await new Promise(r => setTimeout(r, 100))
   renderRebalCharts(val)
-  // Retry after a longer delay for refs that may not have been set yet
-  await new Promise(r => setTimeout(r, 500))
-  renderRebalCharts(val)
-}, { deep: true })
-
-// Use onUpdated to catch when Vue finishes rendering (after :ref callbacks fire)
-onUpdated(() => {
-  if (rebalResult.value) {
-    renderRebalCharts(rebalResult.value)
-  }
-})
-
-// 🔧 Fix: Reliable EGARCH chart initialization via deep watcher on rebalResult.egarch
-// Solves race condition where :ref callback fires before layout is ready
-watch(() => rebalResult.value?.egarch, (egarchData) => {
-  if (!egarchData) return
-  // Wait for Vue to finish rendering the v-for elements
-  nextTick(() => {
-    // Small delay ensures CSS layout is complete (grid columns computed)
-    setTimeout(() => {
-      for (const [key, data] of Object.entries(egarchData)) {
-        if (data.bypassed) continue
-        if (egarchInitialized[key]) continue
-        const el = egarchRefs[key]
-        if (!el) continue
-        initEgarchChart(el, key, data)
-      }
-    }, 120)
-  })
 }, { deep: true })
 
 function renderRebalCharts(result) {
   // Radar charts are now SVG-based (no ECharts needed)
-
-  // ── EGARCH line charts ──
-  // Now handled by onEgarchRef + ResizeObserver, but still attempt here as fallback
-  if (result.egarch) {
-    for (const [key, data] of Object.entries(result.egarch)) {
-      if (data.bypassed) continue
-      if (egarchInitialized[key]) continue  // already rendered
-      const el = egarchRefs[key]
-      if (!el) continue
-      initEgarchChart(el, key, data)
-    }
-  }
+  // EGARCH charts are handled by _scheduleEgarchInit polling mechanism
 
   // ── PCA gauge charts ──
   if (result.pca) {
@@ -1129,22 +1136,9 @@ async function runRebalPipeline() {
   rebalRunning.value = true
   rebalLogs.value = []
   rebalResult.value = null
-  // Reset chart initialization tracking for new run
-  Object.keys(egarchInitialized).forEach(k => delete egarchInitialized[k])
+  // Reset all EGARCH chart state for the new run
+  _resetEgarchState()
   Object.keys(pcaInitialized).forEach(k => delete pcaInitialized[k])
-  // Disconnect all EGARCH ResizeObservers from previous run
-  Object.keys(egarchObservers).forEach(k => {
-    egarchObservers[k]?.disconnect()
-    delete egarchObservers[k]
-  })
-  // Dispose existing ECharts instances on EGARCH elements
-  Object.keys(egarchRefs).forEach(k => {
-    if (egarchRefs[k]) {
-      const existing = echarts.getInstanceByDom(egarchRefs[k])
-      if (existing) existing.dispose()
-    }
-    delete egarchRefs[k]
-  })
 
   const formData = new FormData()
   for (const f of rebalReports.value) {
