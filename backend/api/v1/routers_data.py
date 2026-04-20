@@ -28,7 +28,7 @@ _tasks_status: Dict[str, Any] = {}
 # ─── 市场行情 5 分钟缓存 ───
 _market_quotes_cache: list = []
 _market_quotes_ts: Optional[datetime] = None
-_MARKET_CACHE_SECONDS = 300  # 5 分钟
+_MARKET_CACHE_SECONDS = 60  # 1 分钟缓存，避免与前端5分钟轮训产生竞态导致实际10分钟才更新
 
 MARKET_INDICES = [
     {"code": "000001.SH", "name": "上证指数", "en": "SSE Composite"},
